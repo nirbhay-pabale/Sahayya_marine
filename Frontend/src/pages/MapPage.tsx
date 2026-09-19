@@ -22,10 +22,13 @@ import {
   Menu,
   X,
   Compass,
+  Send,
 } from "lucide-react";
 import { NationalMap } from "../components/NationalMap";
 import { EvidenceGraphModal } from "../components/EvidenceGraphModal";
 import { ReportGenerationModal } from "../components/ReportGenerationModal";
+import { useLanguage } from "../context/LanguageContext";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { ACTIVE_INCIDENTS, ActiveIncidentRecord } from "../data/incidentData";
 import { VESSELS_DATA, VesselRecord, VesselType } from "../data/vesselsData";
 import sahayyaApi from "../services/api";
@@ -33,6 +36,7 @@ import sahayyaSocket from "../services/socket";
 
 export const MapPage: React.FC = () => {
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   // Sidebar toggle state
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -256,21 +260,26 @@ export const MapPage: React.FC = () => {
             <Menu className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#0B2545] to-[#1E5FBF] flex items-center justify-center text-white shadow-sm font-black text-base">
-              S
-            </div>
+          <div 
+            onClick={() => navigate("/dashboard")}
+            className="flex items-center gap-3 cursor-pointer group select-none"
+          >
+            <img 
+              src="/sahayya-logo.png" 
+              alt="Sahayya Logo" 
+              className="h-10 w-auto object-contain transition-transform duration-200 group-hover:scale-105 drop-shadow-sm" 
+            />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-display font-bold text-[#0B2545] text-base tracking-[0.14em] leading-none">
-                  SAHAYYA
+                <span className="font-display font-bold text-[#0B2545] text-base sm:text-lg tracking-[0.14em] leading-none">
+                  {t("brand.name", "SAHAYYA")}
                 </span>
-                <span className="badge-text px-1.5 py-0.2 bg-sky-100 text-[#1E5FBF] rounded-sm uppercase tracking-wider font-body">
-                  National MDA
+                <span className="badge-text px-1.5 py-0.5 bg-sky-100 text-[#1E5FBF] border border-sky-300/60 rounded-full uppercase tracking-wider font-body text-[9px] font-bold">
+                  {t("brand.nationalMda", "NATIONAL MDA")}
                 </span>
               </div>
-              <div className="micro-text text-slate-500 font-body leading-tight">
-                National Maritime Domain Awareness & Situational Grid
+              <div className="micro-text text-slate-500 font-body leading-tight mt-0.5 hidden sm:block">
+                {t("brand.subTitle", "National Maritime Domain Awareness & Situational Grid")}
               </div>
             </div>
           </div>
@@ -283,7 +292,7 @@ export const MapPage: React.FC = () => {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search incident, vessel (IMO, name), port..."
+            placeholder={t("action.search", "Search incident, vessel (IMO, name), port...")}
             className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl pl-9 pr-4 py-1.5 text-xs text-[#0B2545] placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1E5FBF]/30 transition-all font-body input-text"
           />
           {searchQuery && (
@@ -296,8 +305,11 @@ export const MapPage: React.FC = () => {
           )}
         </div>
 
-        {/* Top Right System Status */}
+        {/* Top Right System Status + LanguageSwitcher */}
         <div className="flex items-center gap-3 font-body">
+          {/* Multi-Language Selector */}
+          <LanguageSwitcher variant="light" />
+
           <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             <span>AIS Live Feeds: Active (<span className="data-mono font-mono">30</span> Vessels)</span>
@@ -325,17 +337,19 @@ export const MapPage: React.FC = () => {
         >
           <div className="flex flex-col items-center gap-2.5 w-full px-2">
             {[
-              { id: "Dashboard", icon: Home, label: "Home", path: "/dashboard" },
-              { id: "Map", icon: MapIcon, label: "Map", path: "/map" },
-              { id: "Incidents", icon: Activity, label: "Incidents", path: "/incidents/IN-MH-2026" },
-              { id: "Vessels", icon: Ship, label: "Vessels", path: "/vessels" },
-              { id: "Analysis", icon: BarChart3, label: "Analysis", path: "/analysis" },
-              { id: "Settings", icon: Settings, label: "Settings", path: "/settings" },
-              { id: "Help", icon: HelpCircle, label: "Help", path: "" },
+              { id: "Dashboard", icon: Home, labelKey: "nav.home", fallback: "Home", path: "/dashboard" },
+              { id: "Map", icon: MapIcon, labelKey: "nav.map", fallback: "Map", path: "/map" },
+              { id: "Incidents", icon: Activity, labelKey: "nav.incidents", fallback: "Incidents", path: "/incidents/IN-MH-2026" },
+              { id: "Vessels", icon: Ship, labelKey: "nav.vessels", fallback: "Vessels", path: "/vessels" },
+              { id: "Analysis", icon: BarChart3, labelKey: "nav.analysis", fallback: "Analysis", path: "/analysis" },
+              { id: "Authority", icon: Send, labelKey: "nav.authority", fallback: "Submit to Authority", path: "/authority" },
+              { id: "Settings", icon: Settings, labelKey: "nav.settings", fallback: "Settings", path: "/settings" },
+              { id: "Help", icon: HelpCircle, labelKey: "nav.help", fallback: "Help", path: "/help" },
             ].map((item) => {
               const Icon = item.icon;
               const isActive = activeNav === item.id;
               const isIndigoAccent = item.id === "Analysis";
+              const label = t(item.labelKey, item.fallback);
               return (
                 <button
                   key={item.id}
@@ -352,23 +366,25 @@ export const MapPage: React.FC = () => {
                       ? "text-indigo-200 hover:text-white hover:bg-white/10"
                       : "text-slate-300 hover:text-white hover:bg-white/10"
                   }`}
-                  title={item.label}
+                  title={label}
                 >
                   <Icon className="w-5 h-5 stroke-[1.8]" />
-                  <span className="text-[9px] font-medium tracking-tight font-body">{item.label}</span>
+                  <span className="text-[9px] font-medium tracking-tight font-body truncate max-w-[52px]">{label}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="px-1 text-center font-body">
-            <div className="w-6 h-6 mx-auto mb-1 text-sky-400 opacity-60">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M2 12c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" />
-              </svg>
+          <div className="px-1 text-center font-body flex flex-col items-center">
+            <div 
+              onClick={() => navigate("/dashboard")}
+              className="w-10 h-10 mx-auto mb-1.5 rounded-full p-1 bg-white/10 backdrop-blur-md border border-white/20 shadow-md flex items-center justify-center transition-transform hover:scale-110 cursor-pointer"
+              title="Sahayya Maritime Intelligence"
+            >
+              <img src="/sahayya-logo.png" alt="Sahayya" className="w-full h-full object-contain" />
             </div>
-            <p className="text-[8px] text-slate-400 leading-tight">
-              Safer Oceans.<br />Stronger Tomorrow.
+            <p className="text-[8.5px] text-slate-300 font-medium leading-tight">
+              {t("brand.slogan", "Safer Oceans. Stronger Tomorrow.")}
             </p>
           </div>
         </aside>
@@ -649,8 +665,9 @@ export const MapPage: React.FC = () => {
       <ReportGenerationModal
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
-        incidentTitle="Indian EEZ Maritime Domain Assessment"
-        isFleetReport={true}
+        stage="map"
+        incidentIdOrCode="EEZ-WEST-2026"
+        incidentTitle="Indian EEZ Maritime Situational & Domain Assessment"
       />
     </div>
   );

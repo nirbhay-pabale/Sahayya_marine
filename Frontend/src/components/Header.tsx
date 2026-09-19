@@ -6,6 +6,8 @@ import {
   Layers,
 } from "lucide-react";
 import { SystemHealth } from "../types";
+import { useLanguage } from "../context/LanguageContext";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 
 interface HeaderProps {
   systemHealth: SystemHealth | null;
@@ -22,6 +24,7 @@ export const Header: React.FC<HeaderProps> = ({
   isLoading,
   onLogout,
 }) => {
+  const { t } = useLanguage();
   const [utcTime, setUtcTime] = useState<string>("");
 
   useEffect(() => {
@@ -40,20 +43,22 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="h-14 w-full shrink-0 flex items-center justify-between border-b border-zinc-800 bg-zinc-950 px-5 select-none z-30">
       {/* Brand & System Title */}
       <div className="flex items-center space-x-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded border border-zinc-700 bg-zinc-900 text-zinc-300 shadow-sm">
-          <Satellite className="h-4 w-4 text-zinc-300" />
-        </div>
+        <img 
+          src="/sahayya-logo.png" 
+          alt="Sahayya Logo" 
+          className="h-9 w-auto object-contain drop-shadow-sm" 
+        />
         <div>
           <div className="flex items-center space-x-2">
             <span className="font-display text-base font-bold tracking-wider text-zinc-100">
-              SAHAYYA
+              {t("brand.title")}
             </span>
-            <span className="text-[10px] font-body font-semibold tracking-wider text-zinc-300 bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 rounded">
+            <span className="text-[10px] font-body font-semibold tracking-wider text-sky-400 bg-sky-950/80 border border-sky-800 px-1.5 py-0.5 rounded">
               MDA OPS
             </span>
           </div>
           <p className="text-[10px] font-body text-zinc-400 tracking-wide font-medium">
-            SAR OIL SPILL INTELLIGENCE &amp; AIS ATTRIBUTION
+            {t("brand.subtitle")}
           </p>
         </div>
       </div>
@@ -80,6 +85,9 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Telemetry & Status Badges */}
       <div className="flex items-center space-x-3">
+        {/* Language Switcher */}
+        <LanguageSwitcher variant="dark" />
+
         {/* UTC Clock */}
         <div className="hidden lg:flex items-center space-x-1.5 rounded border border-zinc-800 bg-zinc-900/90 px-2.5 py-1 font-mono text-xs text-zinc-300">
           <Clock className="h-3.5 w-3.5 text-zinc-400" />
@@ -101,12 +109,12 @@ export const Header: React.FC<HeaderProps> = ({
           {systemHealth?.status === "OPERATIONAL" ? (
             <>
               <div className="h-2 w-2 rounded-full bg-emerald-500" />
-              <span className="font-semibold text-zinc-200 tracking-wide">OPERATIONAL</span>
+              <span className="font-semibold text-zinc-200 tracking-wide">{t("status.operational", "OPERATIONAL")}</span>
             </>
           ) : (
             <>
               <div className="h-2 w-2 rounded-full bg-amber-500" />
-              <span className="font-semibold text-amber-400 tracking-wide">CONNECTING</span>
+              <span className="font-semibold text-amber-400 tracking-wide">{t("status.connecting", "CONNECTING")}</span>
             </>
           )}
         </div>
@@ -118,10 +126,11 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center space-x-1.5 rounded border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white px-2.5 py-1 text-xs font-body font-semibold tracking-wider transition-colors cursor-pointer"
             title="Sign Out to Login Page"
           >
-            <span>SIGN OUT</span>
+            <span>{t("action.signOut", "SIGN OUT")}</span>
           </button>
         )}
       </div>
     </header>
   );
 };
+

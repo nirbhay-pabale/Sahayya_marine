@@ -227,9 +227,9 @@ def generate_incident_report_pdf(
     # PAGE 1: COVER PAGE
     # =========================================================================
     elements.append(Spacer(1, 40))
-    # Official Emblem / Header block
-    elements.append(Paragraph("<b>GOVERNMENT OF INDIA &mdash; MINISTRY OF DEFENCE</b>", subtitle_cover_style))
-    elements.append(Paragraph("INDIAN COAST GUARD &middot; MARITIME DEFENCE HEADQUARTERS", ParagraphStyle("HQ", parent=subtitle_cover_style, fontSize=10, textColor=slate_muted, spaceAfter=30)))
+    # Official Header block
+    elements.append(Paragraph("<b>MARITIME DOMAIN AWARENESS &mdash; INCIDENT COMMAND</b>", subtitle_cover_style))
+    elements.append(Paragraph("INDIAN COAST GUARD &middot; MARITIME OPERATIONS COMMAND", ParagraphStyle("HQ", parent=subtitle_cover_style, fontSize=10, textColor=slate_muted, spaceAfter=30)))
     elements.append(HRFlowable(width="60%", thickness=2.0, color=primary_blue, spaceAfter=40))
 
     elements.append(Paragraph("SAHAYYA &mdash; MARITIME SURVEILLANCE &amp; FORENSIC ATTRIBUTION SYSTEM", subtitle_cover_style))
@@ -584,7 +584,7 @@ def generate_incident_report_pdf(
         {"time": "12 Sep 23:00 UTC", "event": "ICGS Vikram on scene deployed containment boom in Sector Alpha.", "status": "done"},
         {"time": "13 Sep 04:30 UTC", "event": "Dornier CG-782 conducted reconnaissance pass; confirmed slick drift bearing 045°.", "status": "done"},
         {"time": "13 Sep 11:00 UTC", "event": "Mechanical skimming initiated with disc sweep arms.", "status": "done"},
-        {"time": "14 Sep 08:00 UTC", "event": "Forensic Evidence Package compiled for Ministry of Defence & DG Shipping.", "status": "in_progress"},
+        {"time": "14 Sep 08:00 UTC", "event": "Forensic Evidence Package compiled for Maritime Authority & DG Shipping.", "status": "in_progress"},
     ]
 
     log_rows = [[Paragraph("<b>Event Timestamp</b>", body_bold), Paragraph("<b>Operational Event / Audit Description</b>", body_bold), Paragraph("<b>State</b>", body_bold)]]
@@ -659,7 +659,7 @@ def generate_incident_report_pdf(
     elements.append(Paragraph(
         "<b>CERTIFIED TRUE RECORD</b><br/>"
         "Directorate of Maritime Safety &amp; Environment Protection &middot; Indian Coast Guard Headquarters, New Delhi<br/>"
-        "<i>Generated automatically by Sahayya Maritime Defense System &mdash; Ministry of Defence, Government of India</i>",
+        "<i>Generated automatically by Sahayya Maritime Defense System &mdash; National Domain Awareness Operations</i>",
         ParagraphStyle("Cert", parent=caption_style, fontSize=8, textColor=navy)
     ))
 
@@ -1020,7 +1020,7 @@ def generate_vessel_evidence_brief_pdf(
 ) -> Dict[str, Any]:
     """
     Generate an authoritative, dynamic 10-page Maritime Forensic Evidence Brief PDF
-    exactly matching the official Indian Coast Guard / Ministry of Defence specification.
+    exactly matching the official Indian Coast Guard specification.
     """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -1105,8 +1105,8 @@ def generate_vessel_evidence_brief_pdf(
     # PAGE 1: TITLE & OFFICIAL HEADER
     # =========================================================================
     elements.append(Spacer(1, 10))
-    elements.append(Paragraph("GOVERNMENT OF INDIA &mdash; MINISTRY OF DEFENCE", ParagraphStyle("GovH", fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=navy, alignment=1)))
-    elements.append(Paragraph("INDIAN COAST GUARD &middot; MARITIME DEFENCE HEADQUARTERS", ParagraphStyle("CgH", fontName="Helvetica", fontSize=9, leading=12, textColor=text_muted, alignment=1)))
+    elements.append(Paragraph("MARITIME DOMAIN AWARENESS &mdash; INCIDENT COMMAND", ParagraphStyle("GovH", fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=navy, alignment=1)))
+    elements.append(Paragraph("INDIAN COAST GUARD &middot; MARITIME OPERATIONS COMMAND", ParagraphStyle("CgH", fontName="Helvetica", fontSize=9, leading=12, textColor=text_muted, alignment=1)))
     elements.append(Spacer(1, 16))
     elements.append(HRFlowable(width="100%", thickness=1.5, color=primary_blue, spaceAfter=20))
     elements.append(Paragraph("SAHAYYA &mdash; MARITIME FORENSIC ATTRIBUTION SYSTEM", ParagraphStyle("SysH", fontName="Helvetica-Bold", fontSize=10, leading=13, textColor=primary_blue, alignment=1)))
@@ -1645,7 +1645,7 @@ def generate_vessel_evidence_brief_pdf(
     elements.append(Paragraph(
         "<b>REPORTING AUTHORITY:</b> Commanding Officer<br/>"
         "Indian Coast Guard MRCC · Indian Coast Guard Maritime Rescue Coordination Centre<br/>"
-        "Directorate of Maritime Safety & Environment Protection, Ministry of Defence, New Delhi",
+        "Directorate of Maritime Safety & Environment Protection, New Delhi",
         ParagraphStyle("AuthBlock", fontName="Helvetica", fontSize=7.0, leading=9.0, textColor=text_dark)
     ))
 

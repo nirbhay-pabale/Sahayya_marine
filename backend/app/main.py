@@ -12,7 +12,8 @@ from app.db.seed import seed_database
 from app.api import (
     auth, incidents, vessels, counterfactual,
     forecast, response, recovery, ports, reports,
-    map_fleet, websockets, ai, settings as settings_api
+    map_fleet, websockets, ai, settings as settings_api,
+    authority
 )
 
 
@@ -85,6 +86,7 @@ app.include_router(map_fleet.router)
 app.include_router(websockets.router)
 app.include_router(ai.router)
 app.include_router(settings_api.router)
+app.include_router(authority.router)
 
 
 @app.get("/", tags=["Health"])

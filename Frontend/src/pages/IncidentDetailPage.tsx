@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useLanguage } from "../context/LanguageContext";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { getAvatarUrl } from "../services/api";
 import {
   INCIDENT_DATA,
@@ -8,12 +10,13 @@ import {
   RESPONSE_PRIORITY_ZONES,
   RECOVERY_MONITORING_DATA,
   ResponsePriorityZone,
+  ActiveIncidentRecord,
 } from "../data/incidentData";
-import { COAST_GUARD_ASSETS, CoastGuardAsset } from "../data/vesselsData";
 import { StatusStepper } from "../components/StatusStepper";
-import { IncidentMiniMap } from "../components/IncidentMiniMap";
+import { IncidentMiniMap, MapVesselCandidate, MapCoastGuardAsset } from "../components/IncidentMiniMap";
 import { EvidenceGraphModal } from "../components/EvidenceGraphModal";
 import { ReportGenerationModal } from "../components/ReportGenerationModal";
+import { generateIncidentTelemetryPdf } from "../services/incidentTelemetryPdfGenerator";
 import sahayyaApi from "../services/api";
 import {
   ResponsiveContainer,
@@ -42,6 +45,7 @@ import {
   Shield,
   RotateCcw,
   Play,
+  Pause,
   ChevronLeft,
   ChevronRight,
   Maximize2,
@@ -74,14 +78,39 @@ import {
   Fish,
   Sparkles,
   Copy,
+  Radio,
+  RefreshCw,
+  Cpu,
+  Database,
+  Crosshair,
+  Send,
 } from "lucide-react";
 
 export const IncidentDetailPage: React.FC = () => {
   const { incidentId } = useParams<{ incidentId?: string }>();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { t } = useLanguage();
 
   const effectiveIncidentId = incidentId || INCIDENT_DATA.id;
+
+  // =========================================================================
+  // DYNAMIC API DATA STATE
+  // =========================================================================
+  const [isLoadingApi, setIsLoadingApi] = useState(true);
+  const [isLiveTelemetry, setIsLiveTelemetry] = useState(false);
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>("Syncing...");
+  
+  // Dynamic API payloads
+  const [incidentDetail, setIncidentDetail] = useState<any>(null);
+  const [spillDNA, setSpillDNA] = useState<any>(null);
+  const [originZone, setOriginZone] = useState<any>(null);
+  const [spillEvolutionData, setSpillEvolutionData] = useState<any>(null);
+  const [impactData, setImpactData] = useState<any>(null);
+  const [vesselAttributions, setVesselAttributions] = useState<any[]>([]);
+  const [nearbyAssets, setNearbyAssets] = useState<any[]>([]);
+  const [priorityZones, setPriorityZones] = useState<any[]>([]);
+  const [forecastSnapshots, setForecastSnapshots] = useState<any[]>([]);
 
   // Layout / Topbar / Sidebar states
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -161,13 +190,108 @@ export const IncidentDetailPage: React.FC = () => {
     }, 3500);
   };
 
-  // Timeline scrubber timer
+  // =========================================================================
+  // FETCH DYNAMIC INCIDENT DATA FROM BACKEND API
+  // =========================================================================
+  const fetchIncidentData = async () => {
+    setIsLoadingApi(true);
+    try {
+      const [
+        incRes,
+        dnaRes,
+        originRes,
+        evolutionRes,
+        impactRes,
+        attribRes,
+        assetsRes,
+        priorityRes,
+        forecastRes,
+      ] = await Promise.allSettled([
+        sahayyaApi.incidents.get(effectiveIncidentId),
+        sahayyaApi.incidents.getSpillDNA(effectiveIncidentId),
+        sahayyaApi.incidents.getOriginZone(effectiveIncidentId),
+        sahayyaApi.incidents.getSpillEvolution(effectiveIncidentId),
+        sahayyaApi.incidents.getImpactAssessment(effectiveIncidentId),
+        sahayyaApi.vessels.getAttributions(effectiveIncidentId),
+        sahayyaApi.response.getNearbyAssets(18.78, 72.51),
+        sahayyaApi.response.getPriorityZones(effectiveIncidentId),
+        sahayyaApi.simulation.getForecast(effectiveIncidentId, 48),
+      ]);
+
+      let hasLive = false;
+
+      if (incRes.status === "fulfilled" && incRes.value) {
+        setIncidentDetail(incRes.value);
+        if (incRes.value.description) {
+          setOverviewDescription(incRes.value.description);
+          setTempDescription(incRes.value.description);
+        }
+        if (incRes.value.investigating_agency) {
+          setOverviewAgency(incRes.value.investigating_agency);
+          setTempAgency(incRes.value.investigating_agency);
+        }
+        hasLive = true;
+      }
+
+      if (dnaRes.status === "fulfilled" && dnaRes.value) {
+        setSpillDNA(dnaRes.value);
+        hasLive = true;
+      }
+
+      if (originRes.status === "fulfilled" && originRes.value) {
+        setOriginZone(originRes.value);
+        hasLive = true;
+      }
+
+      if (evolutionRes.status === "fulfilled" && evolutionRes.value) {
+        setSpillEvolutionData(evolutionRes.value);
+        hasLive = true;
+      }
+
+      if (impactRes.status === "fulfilled" && impactRes.value) {
+        setImpactData(impactRes.value);
+        hasLive = true;
+      }
+
+      if (attribRes.status === "fulfilled" && Array.isArray(attribRes.value)) {
+        setVesselAttributions(attribRes.value);
+        hasLive = true;
+      }
+
+      if (assetsRes.status === "fulfilled" && Array.isArray(assetsRes.value)) {
+        setNearbyAssets(assetsRes.value);
+      }
+
+      if (priorityRes.status === "fulfilled" && Array.isArray(priorityRes.value)) {
+        setPriorityZones(priorityRes.value);
+      }
+
+      if (forecastRes.status === "fulfilled" && forecastRes.value?.snapshots) {
+        setForecastSnapshots(forecastRes.value.snapshots);
+      }
+
+      setIsLiveTelemetry(hasLive);
+      setLastUpdatedTime(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) + " UTC");
+    } catch (err) {
+      console.warn("API fallback to high-fidelity simulated telemetry:", err);
+      setIsLiveTelemetry(false);
+      setLastUpdatedTime(new Date().toLocaleTimeString("en-GB") + " (Simulated)");
+    } finally {
+      setIsLoadingApi(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchIncidentData();
+  }, [effectiveIncidentId]);
+
+  // Scrubber timer
   useEffect(() => {
     let interval: any;
     if (isPlayingTimeline) {
       interval = setInterval(() => {
-        setSelectedTimelineIndex((prev) => (prev + 1) % INCIDENT_DATA.timelineFrames.length);
-      }, 1400);
+        setSelectedTimelineIndex((prev) => (prev + 1) % 7);
+      }, 1500);
     }
     return () => clearInterval(interval);
   }, [isPlayingTimeline]);
@@ -189,13 +313,235 @@ export const IncidentDetailPage: React.FC = () => {
     );
   };
 
+  // Derived Dynamic Data & Fallbacks
+  const currentAreaKm2 = useMemo(() => {
+    if (spillDNA?.area_km2) return spillDNA.area_km2;
+    if (incidentDetail?.spill_area_km2) return incidentDetail.spill_area_km2;
+    return 276.04;
+  }, [spillDNA, incidentDetail]);
+
+  const currentSeverityScore = useMemo(() => {
+    if (incidentDetail?.severity_score) {
+      const score = incidentDetail.severity_score;
+      return score <= 10 ? Math.round(score * 10) : Math.round(score);
+    }
+    return 82;
+  }, [incidentDetail]);
+
+  const currentCoords = useMemo<[number, number]>(() => {
+    if (originZone?.center_point?.coordinates) {
+      const c = originZone.center_point.coordinates;
+      return [c[1], c[0]];
+    }
+    if (incidentDetail?.location?.coordinates) {
+      const c = incidentDetail.location.coordinates;
+      return [c[1], c[0]];
+    }
+    return [18.78, 72.51];
+  }, [originZone, incidentDetail]);
+
+  const currentDistanceToCoast = useMemo(() => {
+    if (impactData?.coastline_distance_km) return impactData.coastline_distance_km;
+    return 38;
+  }, [impactData]);
+
+  const currentEtaHours = useMemo(() => {
+    if (impactData?.eta_hours) return impactData.eta_hours;
+    return 16.4;
+  }, [impactData]);
+
+  // Timeline frames (interactive calculation)
+  const timelinePoints = useMemo(() => {
+    const baseArea = currentAreaKm2;
+    const offsets = [
+      { label: "-24h", offset: "-24h", time: "11 Sep 17:00 UTC", area: Math.round(baseArea * 0.31 * 100) / 100, conf: 94.2, status: "Past (Hindcast)", dist: 78, lat: currentCoords[0] - 0.15, lon: currentCoords[1] - 0.12 },
+      { label: "-12h", offset: "-12h", time: "12 Sep 05:00 UTC", area: Math.round(baseArea * 0.62 * 100) / 100, conf: 93.8, status: "Past (Hindcast)", dist: 58, lat: currentCoords[0] - 0.08, lon: currentCoords[1] - 0.06 },
+      { label: "Now", offset: "0h", time: "12 Sep 17:00 UTC", area: baseArea, conf: 92.4, status: "Detected (Present)", dist: currentDistanceToCoast, lat: currentCoords[0], lon: currentCoords[1] },
+      { label: "+12h", offset: "+12h", time: "13 Sep 05:00 UTC", area: Math.round(baseArea * 1.25 * 100) / 100, conf: 88.0, status: "Forecast (Projected)", dist: Math.max(8, currentDistanceToCoast - 12), lat: currentCoords[0] + 0.07, lon: currentCoords[1] + 0.08 },
+      { label: "+24h", offset: "+24h", time: "13 Sep 17:00 UTC", area: Math.round(baseArea * 1.49 * 100) / 100, conf: 84.5, status: "Forecast (Projected)", dist: Math.max(4, currentDistanceToCoast - 22), lat: currentCoords[0] + 0.14, lon: currentCoords[1] + 0.17 },
+      { label: "+36h", offset: "+36h", time: "14 Sep 05:00 UTC", area: Math.round(baseArea * 1.74 * 100) / 100, conf: 79.2, status: "Forecast (Projected)", dist: Math.max(1, currentDistanceToCoast - 31), lat: currentCoords[0] + 0.21, lon: currentCoords[1] + 0.25 },
+      { label: "+48h", offset: "+48h", time: "14 Sep 17:00 UTC", area: Math.round(baseArea * 1.90 * 100) / 100, conf: 73.0, status: "Forecast (Projected)", dist: 0, lat: currentCoords[0] + 0.28, lon: currentCoords[1] + 0.33 },
+    ];
+    return offsets;
+  }, [currentAreaKm2, currentCoords, currentDistanceToCoast]);
+
+  const activeTimelineFrame = timelinePoints[selectedTimelineIndex] || timelinePoints[2];
+
+  // Dynamic Map Vessel Candidates
+  const dynamicMapVessels = useMemo<MapVesselCandidate[]>(() => {
+    if (vesselAttributions && vesselAttributions.length > 0) {
+      return vesselAttributions.map((va, idx) => {
+        const v = va.vessel || {};
+        let coords: [number, number] = [currentCoords[0] + 0.05 * (idx === 0 ? 1 : -idx), currentCoords[1] - 0.04 * (idx + 1)];
+        if (v.latest_position?.coordinates) {
+          const raw = v.latest_position.coordinates;
+          if (Array.isArray(raw)) {
+            coords = [raw[1], raw[0]];
+          } else if (typeof raw === "string") {
+            const parts = raw.split(" ").map(Number);
+            if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+              coords = [parts[1], parts[0]];
+            }
+          }
+        }
+        return {
+          id: String(va.id || v.id || idx),
+          name: v.name || `Vessel Candidate #${idx + 1}`,
+          score: va.attribution_pct || va.overall_evidence_pct || 50,
+          imo: v.imo_number || "9438200",
+          type: (v.vessel_type || "Tanker").replace("_", " ").toUpperCase(),
+          flag: v.flag_country || "Liberia",
+          coords,
+          heading: v.heading_deg || 312,
+          speed: v.speed_kts || va.min_sog_kts || 1.4,
+          rank: va.rank || idx + 1,
+        };
+      });
+    }
+    return [
+      {
+        name: "MT PACIFIC VOYAGER",
+        score: 98.8,
+        imo: "9438200",
+        type: "Crude Oil Tanker",
+        flag: "Liberia",
+        coords: [18.82, 72.46],
+        heading: 312,
+        speed: 1.4,
+        rank: 1,
+      },
+      {
+        name: "CMA CGM ANTARES",
+        score: 43.5,
+        imo: "9723411",
+        type: "Container Vessel",
+        flag: "France",
+        coords: [19.35, 72.15],
+        heading: 148,
+        speed: 14.8,
+        rank: 2,
+      },
+      {
+        name: "MV NORDIC TRADER",
+        score: 31.2,
+        imo: "9315678",
+        type: "Bulk Carrier",
+        flag: "Panama",
+        coords: [18.36, 72.78],
+        heading: 180,
+        speed: 11.2,
+        rank: 3,
+      },
+    ];
+  }, [vesselAttributions, currentCoords]);
+
+  // Dynamic Map Coast Guard Assets
+  const dynamicMapAssets = useMemo<MapCoastGuardAsset[]>(() => {
+    if (nearbyAssets && nearbyAssets.length > 0) {
+      return nearbyAssets.slice(0, 6).map((cg) => ({
+        id: cg.id,
+        name: cg.name,
+        asset_type: cg.asset_type,
+        coordinates: cg.coordinates || [cg.current_location?.coordinates?.[1] || 18.78, cg.current_location?.coordinates?.[0] || 72.5],
+        status: cg.status,
+        distance_km: cg.distance_km,
+      }));
+    }
+    return [
+      { id: "cg-1", name: "ICGS Vikram", coordinates: [18.84, 72.62], status: "operational", distance_km: 13.4, asset_type: "offshore_patrol_vessel" },
+      { id: "cg-2", name: "ICGS Samarth", coordinates: [18.72, 72.45], status: "operational", distance_km: 9.2, asset_type: "offshore_patrol_vessel" },
+      { id: "cg-3", name: "Dornier CG-782", coordinates: [18.78, 72.5], status: "on_mission", distance_km: 1.1, asset_type: "patrol_aircraft" },
+      { id: "cg-4", name: "ICGS C-438", coordinates: [18.85, 72.78], status: "operational", distance_km: 29.5, asset_type: "interceptor_boat" },
+    ];
+  }, [nearbyAssets]);
+
+  // =========================================================================
+  // DYNAMIC DIGITAL TWIN PHYSICS & DISPERSION ENGINE
+  // =========================================================================
+  const digitalTwinSimulation = useMemo(() => {
+    const lat0 = currentCoords[0];
+    const lon0 = currentCoords[1];
+
+    // Wind blowing TO direction (180 deg opposite of where it comes from)
+    const windToDeg = (simWindDir + 180) % 360;
+    const windRad = (windToDeg * Math.PI) / 180;
+    // Current direction approx 189 deg (South-Southwest)
+    const currRad = (189 * Math.PI) / 180;
+
+    // Wind drift speed in knots (standard 3.5% rule)
+    const windDriftKts = simWindSpeed * 0.035 * 1.94384;
+    const currKts = simCurrentSpeed * 1.94384;
+
+    const u = windDriftKts * Math.sin(windRad) + currKts * Math.sin(currRad);
+    const v = windDriftKts * Math.cos(windRad) + currKts * Math.cos(currRad);
+
+    const netSpeedKts = Math.sqrt(u * u + v * v);
+    const netHeadingDeg = (Math.atan2(u, v) * 180 / Math.PI + 360) % 360;
+
+    // Elongation ratio & simulated area based on wind velocity
+    const elongation = 1 + (simWindSpeed / 10);
+    const dynamicArea = currentAreaKm2 * (1 + (simWindSpeed * 0.022) + (simCurrentSpeed * 0.05));
+
+    const majorAxisDeg = 0.14 * Math.sqrt(dynamicArea / 276.04) * elongation;
+    const minorAxisDeg = (0.08 * Math.sqrt(dynamicArea / 276.04)) / Math.sqrt(elongation);
+
+    // Generate 14 rotated slick polygon vertices
+    const slickVerts: [number, number][] = [];
+    const rotRad = (netHeadingDeg * Math.PI) / 180;
+
+    for (let i = 0; i < 14; i++) {
+      const angle = (i * 2 * Math.PI) / 14;
+      const x = minorAxisDeg * Math.cos(angle);
+      const y = majorAxisDeg * Math.sin(angle);
+      const dLat = -x * Math.sin(rotRad) + y * Math.cos(rotRad);
+      const dLon = (x * Math.cos(rotRad) + y * Math.sin(rotRad)) / Math.cos((lat0 * Math.PI) / 180);
+      slickVerts.push([lat0 + dLat, lon0 + dLon]);
+    }
+
+    // Generate 48h forecast trajectory curve (9 snapshots)
+    const forecastPath: [number, number][] = [];
+    const hoursSteps = [0, 6, 12, 18, 24, 30, 36, 42, 48];
+    for (const h of hoursSteps) {
+      const distNm = netSpeedKts * h;
+      const dLat = (distNm * Math.cos(rotRad)) / 60;
+      const dLon = (distNm * Math.sin(rotRad)) / (60 * Math.cos((lat0 * Math.PI) / 180));
+      forecastPath.push([lat0 + dLat, lon0 + dLon]);
+    }
+
+    // Landfall ETA calculation
+    const distKm = currentDistanceToCoast;
+    const speedKmh = Math.max(0.4, netSpeedKts * 1.852);
+    const landfallEtaHours = Math.max(1.2, Math.round((distKm / speedKmh) * 10) / 10);
+
+    // Target coastline sector prediction
+    let targetSector = "Alibaug & Raigad Shoreline";
+    if (netHeadingDeg >= 30 && netHeadingDeg < 95) {
+      targetSector = "Mumbai Harbor & JNPT Port Approaches";
+    } else if (netHeadingDeg >= 95 && netHeadingDeg < 165) {
+      targetSector = "Alibaug, Kashid & Murud Coastal Belt";
+    } else if (netHeadingDeg >= 165 && netHeadingDeg < 230) {
+      targetSector = "Ratnagiri Offshore Marine Corridor";
+    } else {
+      targetSector = "Open Arabian Sea (Offshore Drift)";
+    }
+
+    return {
+      netSpeedKts,
+      netHeadingDeg,
+      dynamicArea,
+      slickVerts,
+      forecastPath,
+      landfallEtaHours,
+      targetSector,
+    };
+  }, [simWindSpeed, simWindDir, simCurrentSpeed, currentCoords, currentAreaKm2, currentDistanceToCoast]);
+
   const currentCarouselSlide = INCIDENT_DATA.carouselImages[carouselIndex];
-  const activeTimelineFrame = INCIDENT_DATA.timelineFrames[selectedTimelineIndex];
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-sky-canvas text-slate-800 font-sans select-none flex flex-col antialiased">
       {/* ======================================================================= */}
-      {/* 1. TOP BAR (WHITE BACKGROUND, CLEAN ENTERPRISE/GOV DESIGN)             */}
+      {/* 1. TOP BAR (ENTERPRISE / MARITIME DEFENSE COMMAND DESIGN)               */}
       {/* ======================================================================= */}
       <header className="h-16 w-full shrink-0 bg-white border-b border-[#DCEEFC] px-4 lg:px-6 flex items-center justify-between z-40 relative shadow-[0_2px_12px_rgba(30,95,191,0.06)]">
         {/* Left: 2-Bar Sidebar Toggle + Emblem + Sahayya Brand */}
@@ -225,64 +571,33 @@ export const IncidentDetailPage: React.FC = () => {
             </div>
           </button>
 
-          {/* Government of India Emblem */}
-          <div className="flex items-center gap-2.5 pr-4 border-r border-[#E1EEF9]">
-            <div className="w-8 h-8 flex items-center justify-center text-slate-700 shrink-0">
-              <svg className="w-7 h-7" viewBox="0 0 24 24" fill="currentColor">
-                <path
-                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 2c4.41 0 8 3.59 8 8s-3.59 8-8 8-8-3.59-8-8 3.59-8 8-8zm-1 3v4h2V7h-2zm0 6v4h2v-4h-2z"
-                  opacity="0.2"
-                />
-                <path d="M12 3.5l1.5 3h3.5l-2.8 2.2 1 3.5-3.2-2.1-3.2 2.1 1-3.5-2.8-2.2h3.5z" />
-                <path d="M7 16h10v2H7zm2 3h6v1.5H9z" />
-              </svg>
-            </div>
-            <div className="hidden sm:block leading-tight font-body">
-              <div className="text-[11px] font-semibold tracking-wide text-[#0B2545] uppercase">
-                Ministry of Defence
-              </div>
-              <div className="text-[10px] text-slate-500 font-normal">Government of India</div>
-            </div>
-          </div>
-
-          {/* Sahayya Logo */}
+          {/* Sahayya Official Logo & Brand */}
           <div
             onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-3 cursor-pointer"
+            className="flex items-center gap-3 cursor-pointer group select-none"
           >
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-white to-sky-100 flex items-center justify-center shadow-md border border-[#E1EEF9] shrink-0">
-              <svg className="w-6 h-6" viewBox="0 0 44 44" fill="none">
-                <path
-                  d="M10 24C10 18.4772 14.4772 14 20 14C24.4183 14 28.1634 16.8579 29.4721 20.8579C30.7808 24.8579 34.5259 27.7157 38.9443 27.7157"
-                  stroke="#185ADB"
-                  strokeWidth="4"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M5.05572 16.2843C9.47413 16.2843 13.2192 19.1421 14.5279 23.1421C15.8366 27.1421 19.5817 30 24 30C29.5228 30 34 25.5228 34 20"
-                  stroke="#06B6D4"
-                  strokeWidth="4"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>
+            <img 
+              src="/sahayya-logo.png" 
+              alt="Sahayya Logo" 
+              className="h-11 w-auto object-contain transition-transform duration-200 group-hover:scale-105 drop-shadow-sm" 
+            />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-display text-lg font-bold tracking-[0.16em] text-[#0B2545]">
-                  SAHAYYA
+                <span className="font-display text-lg sm:text-xl font-bold tracking-[0.14em] text-[#0B2545] leading-none">
+                  {t("brand.name", "SAHAYYA")}
                 </span>
-                <span className="bg-emerald-100 text-emerald-700 border border-emerald-300 text-[9px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wider font-body">
-                  BETA
+                <span className="bg-sky-100 text-[#1E5FBF] border border-sky-300/60 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider font-body">
+                  {t("brand.mdaOps", "COMMAND")}
                 </span>
               </div>
-              <p className="text-[10px] text-slate-500 hidden md:block font-body">
-                Safer Seas. Cleaner Oceans. Stronger Tomorrow.
+              <p className="text-[10px] sm:text-[10.5px] text-slate-500 font-medium font-body mt-0.5 hidden md:block">
+                {t("brand.tagline", "Maritime Domain Awareness & Forensic Intelligence")}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Center: Search */}
+        {/* Center: Search / Telemetry status */}
         <div className="hidden md:flex flex-1 max-w-md mx-6 font-body">
           <div className="relative w-full flex items-center">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
@@ -292,7 +607,7 @@ export const IncidentDetailPage: React.FC = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setIsSearchFocused(true)}
               onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-              placeholder="Search vessel (IMO, name), location or coordinates..."
+              placeholder={t("action.search", "Search vessel (IMO, MMSI), coordinates, or spill evidence...")}
               className="w-full pl-9 pr-12 py-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-1 focus:ring-[#1E5FBF] transition-all font-body"
             />
             <span className="absolute right-2.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-white border border-[#E1EEF9] text-slate-500 pointer-events-none">
@@ -301,16 +616,36 @@ export const IncidentDetailPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Right: Operational Status + Bell + User */}
+        {/* Right: Live Data Stream Badge + LanguageSwitcher + Bell + User Menu */}
         <div className="flex items-center gap-3">
-          <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 text-xs font-semibold font-body">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Systems Operational</span>
+          {/* Multi-Language Selector */}
+          <LanguageSwitcher variant="light" />
+
+          {/* Dynamic Telemetry Status Badge */}
+          <div className="flex items-center gap-1.5">
+            {isLiveTelemetry ? (
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold font-body shadow-2xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                <span className="font-mono text-[11px]">LIVE API STREAM</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold font-body shadow-2xs">
+                <Radio className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                <span className="font-mono text-[10.5px]">SIMULATED / DEMO MODE</span>
+              </div>
+            )}
+            <button
+              onClick={fetchIncidentData}
+              title="Refresh live intelligence telemetry"
+              className="p-1.5 rounded-xl border border-[#E1EEF9] hover:bg-[#F0F7FD] text-slate-500 hover:text-[#1E5FBF] transition-all cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingApi ? "animate-spin text-[#1E5FBF]" : ""}`} />
+            </button>
           </div>
 
           {/* Notifications Bell */}
           <button
-            onClick={() => triggerToast("All telemetry channels active.")}
+            onClick={() => triggerToast("All telemetry channels active (Copernicus SAR, INCOIS Wave, Coastal AIS).")}
             className="w-9 h-9 rounded-xl border border-[#E1EEF9] hover:bg-[#F0F7FD] flex items-center justify-center text-slate-600 transition-colors cursor-pointer relative"
           >
             <Bell className="w-4 h-4" />
@@ -358,7 +693,7 @@ export const IncidentDetailPage: React.FC = () => {
                   }}
                   className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-xs text-slate-700 flex items-center gap-2 cursor-pointer mt-1"
                 >
-                  <span>Profile & Settings</span>
+                  <span>{t("nav.settings", "Profile & Settings")}</span>
                 </button>
                 <button
                   onClick={() => {
@@ -368,7 +703,7 @@ export const IncidentDetailPage: React.FC = () => {
                   className="w-full text-left px-3 py-2 rounded-lg hover:bg-rose-50 text-xs text-rose-600 flex items-center gap-2 cursor-pointer font-semibold"
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>Logout</span>
+                  <span>{t("nav.signOut", "Logout")}</span>
                 </button>
               </div>
             )}
@@ -394,17 +729,19 @@ export const IncidentDetailPage: React.FC = () => {
             }`}
           >
             {[
-              { id: "Dashboard", icon: Home, label: "Home", path: "/dashboard" },
-              { id: "Map", icon: MapIcon, label: "Map", path: "/map" },
-              { id: "Incidents", icon: Activity, label: "Incidents", path: `/incidents/${effectiveIncidentId}` },
-              { id: "Vessels", icon: Ship, label: "Vessels", path: "/vessels" },
-              { id: "Analysis", icon: BarChart3, label: "Analysis", path: "/analysis" },
-              { id: "Settings", icon: Settings, label: "Settings", path: "/settings" },
-              { id: "Help", icon: HelpCircle, label: "Help", path: "" },
+              { id: "Dashboard", icon: Home, labelKey: "nav.home", fallback: "Home", path: "/dashboard" },
+              { id: "Map", icon: MapIcon, labelKey: "nav.map", fallback: "Map", path: "/map" },
+              { id: "Incidents", icon: Activity, labelKey: "nav.incidents", fallback: "Incidents", path: `/incidents/${effectiveIncidentId}` },
+              { id: "Vessels", icon: Ship, labelKey: "nav.vessels", fallback: "Vessels", path: "/vessels" },
+              { id: "Analysis", icon: BarChart3, labelKey: "nav.analysis", fallback: "Analysis", path: "/analysis" },
+              { id: "Authority", icon: Send, labelKey: "nav.authority", fallback: "Submit to Authority", path: "/authority" },
+              { id: "Settings", icon: Settings, labelKey: "nav.settings", fallback: "Settings", path: "/settings" },
+              { id: "Help", icon: HelpCircle, labelKey: "nav.help", fallback: "Help", path: "/help" },
             ].map((item) => {
               const Icon = item.icon;
               const isActive = activeNav === item.id;
               const isIndigoAccent = item.id === "Analysis";
+              const label = t(item.labelKey, item.fallback);
 
               return (
                 <button
@@ -413,10 +750,8 @@ export const IncidentDetailPage: React.FC = () => {
                     setActiveNav(item.id);
                     if (item.path) {
                       navigate(item.path);
-                    } else if (item.id === "Help") {
-                      triggerToast("Help & Standard Operating Procedures (SOP) Reference Guide");
                     } else {
-                      triggerToast(`Switched view to: ${item.label}`);
+                      triggerToast(`Switched view to: ${label}`);
                     }
                   }}
                   className={`w-full py-2.5 rounded-xl flex flex-col items-center justify-center gap-1 transition-all cursor-pointer relative ${
@@ -428,24 +763,25 @@ export const IncidentDetailPage: React.FC = () => {
                       ? "text-indigo-200 hover:text-white hover:bg-[#6366F1]/20"
                       : "text-slate-300 hover:text-white hover:bg-white/10"
                   }`}
-                  title={item.label}
+                  title={label}
                 >
                   <Icon className="w-5 h-5 stroke-[1.8]" />
-                  <span className="text-[9px] font-semibold tracking-tight">{item.label}</span>
+                  <span className="text-[9px] font-semibold tracking-tight truncate max-w-[56px]">{label}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="px-1 text-center">
-            <div className="w-6 h-6 mx-auto mb-1 text-sky-400 opacity-60">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M2 12c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" />
-                <path d="M2 17c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" opacity="0.5" />
-              </svg>
+          <div className="px-1 text-center flex flex-col items-center">
+            <div 
+              onClick={() => navigate("/dashboard")}
+              className="w-10 h-10 mx-auto mb-1.5 rounded-full p-1 bg-white/10 backdrop-blur-md border border-white/20 shadow-md flex items-center justify-center transition-transform hover:scale-110 cursor-pointer"
+              title="Sahayya Maritime Intelligence"
+            >
+              <img src="/sahayya-logo.png" alt="Sahayya" className="w-full h-full object-contain" />
             </div>
-            <p className="text-[8px] text-slate-400 leading-tight">
-              Safer Oceans.<br />Stronger Tomorrow.
+            <p className="text-[9px] font-body text-slate-300 font-medium leading-tight">
+              {t("brand.slogan", "Safer Oceans. Stronger Tomorrow.")}
             </p>
           </div>
         </aside>
@@ -454,26 +790,41 @@ export const IncidentDetailPage: React.FC = () => {
         <main className="flex-1 h-full overflow-y-auto overflow-x-auto bg-sky-canvas p-4 lg:p-6 custom-tactical-scrollbar">
           <div className="min-w-[1140px] max-w-[1600px] mx-auto flex flex-col space-y-5 pb-8">
             {/* ================================================================= */}
-            {/* BREADCRUMB ROW                                                   */}
+            {/* BREADCRUMB ROW & DATA FRESHNESS METRICS                           */}
             {/* ================================================================= */}
-            <nav className="flex items-center gap-2 text-xs font-medium text-slate-500 font-body">
-              <button
-                onClick={() => navigate("/dashboard")}
-                className="flex items-center gap-1 hover:text-[#0B2545] transition-colors cursor-pointer"
-              >
-                <Home className="w-3.5 h-3.5 text-slate-400" />
-                <span>Dashboard</span>
-              </button>
-              <span className="text-slate-300">/</span>
-              <button
-                onClick={() => triggerToast("Active incident register: 1 active incident.")}
-                className="hover:text-[#0B2545] transition-colors cursor-pointer text-[#1E5FBF]"
-              >
-                Incidents
-              </button>
-              <span className="text-slate-300">/</span>
-              <span className="font-semibold text-[#0B2545] font-mono">{effectiveIncidentId}</span>
-            </nav>
+            <div className="flex items-center justify-between font-body text-xs text-slate-500">
+              <nav className="flex items-center gap-2 font-medium">
+                <button
+                  onClick={() => navigate("/dashboard")}
+                  className="flex items-center gap-1 hover:text-[#0B2545] transition-colors cursor-pointer"
+                >
+                  <Home className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Dashboard</span>
+                </button>
+                <span className="text-slate-300">/</span>
+                <button
+                  onClick={() => triggerToast("Active incident register: 1 active investigation.")}
+                  className="hover:text-[#0B2545] transition-colors cursor-pointer text-[#1E5FBF]"
+                >
+                  Incidents
+                </button>
+                <span className="text-slate-300">/</span>
+                <span className="font-semibold text-[#0B2545] font-mono">{effectiveIncidentId}</span>
+              </nav>
+
+              <div className="flex items-center gap-3 font-mono text-[11px] text-slate-500">
+                <span className="flex items-center gap-1">
+                  <Database className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Telemetry Feed:</span>
+                  <span className="font-bold text-[#0B2545]">{isLiveTelemetry ? "FastAPI Core v2.4" : "Offline Sandbox"}</span>
+                </span>
+                <span className="text-slate-300">|</span>
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Last Updated: {lastUpdatedTime}</span>
+                </span>
+              </div>
+            </div>
 
             {/* ================================================================= */}
             {/* TITLE ROW & ACTIONS + STATUS STEPPER                            */}
@@ -482,15 +833,23 @@ export const IncidentDetailPage: React.FC = () => {
               <div>
                 <div className="flex items-center gap-3">
                   <h1 className="heading-page text-[#0B2545]">
-                    {effectiveIncidentId}
+                    {incidentDetail?.title || `${effectiveIncidentId} — Mumbai High Offshore`}
                   </h1>
                   <span className="bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-2xs font-body badge-text">
                     <AlertTriangle className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
-                    <span>Live Incident</span>
+                    <span className="uppercase">{incidentDetail?.status || "Live Investigation"}</span>
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-1 font-body">
-                  <span>Mumbai High Offshore</span> &nbsp;|&nbsp; <span>Arabian Sea</span> &nbsp;|&nbsp; <span className="font-mono text-slate-600 data-mono">18.78°N, 72.51°E</span>
+                <p className="text-xs text-slate-500 mt-1 font-body flex items-center gap-2">
+                  <span>{incidentDetail?.region_name || "Arabian Sea (Maharashtra EEZ)"}</span>
+                  <span className="text-slate-300">&bull;</span>
+                  <span className="font-mono text-slate-700 font-semibold">
+                    {currentCoords[0].toFixed(4)}°N, {currentCoords[1].toFixed(4)}°E
+                  </span>
+                  <span className="text-slate-300">&bull;</span>
+                  <span className="font-mono text-slate-500">
+                    Detected: {incidentDetail?.detected_at ? new Date(incidentDetail.detected_at).toUTCString() : "12 Sep 2026 17:00 UTC"}
+                  </span>
                 </p>
               </div>
 
@@ -503,36 +862,75 @@ export const IncidentDetailPage: React.FC = () => {
                     className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] bg-white hover:bg-[#F8FBFE] text-xs font-semibold text-slate-700 flex items-center gap-1.5 shadow-[0_2px_8px_rgba(30,95,191,0.06)] transition-all cursor-pointer btn-text"
                   >
                     <Share2 className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Share</span>
+                    <span>Share Command</span>
                   </button>
 
                   <button
-                    onClick={() => {
-                      const exportData = {
-                        incident_code: effectiveIncidentId,
-                        title: INCIDENT_DATA.name,
-                        severity_score: 8.4,
-                        spill_area_km2: 276.04,
-                        coordinates: [18.78, 72.51],
-                        top_candidate: "MT PACIFIC VOYAGER",
-                        exported_at: new Date().toISOString(),
-                        system: "Sahayya Maritime Defense & Forensic Attribution"
-                      };
-                      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = `Sahayya_${effectiveIncidentId}_Intelligence_Telemetry.json`;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                      triggerToast(`Exported ${effectiveIncidentId} GeoJSON telemetry dataset`);
+                    onClick={async () => {
+                      try {
+                        triggerToast("Compiling official Telemetry Intelligence Report (PDF)...");
+                        await generateIncidentTelemetryPdf({
+                          incidentCode: effectiveIncidentId,
+                          incidentTitle: incidentDetail?.title || INCIDENT_DATA.name,
+                          regionName: incidentDetail?.region_name || "Arabian Sea (Maharashtra EEZ)",
+                          status: incidentDetail?.status || "Live Investigation",
+                          severityScore: currentSeverityScore,
+                          coordinates: currentCoords,
+                          detectedAt: incidentDetail?.detected_at || "2026-09-12T17:00:00Z",
+                          investigatingAgency: incidentDetail?.investigating_agency || "Indian Coast Guard",
+                          detectionSource: incidentDetail?.detection_source || "Sentinel-1A SAR (C-band)",
+                          spillAreaKm2: currentAreaKm2,
+                          spillDNA: spillDNA || {
+                            perimeter_km: 94.6,
+                            length_major_km: 32.4,
+                            width_minor_km: 11.2,
+                            orientation_deg: 38.5,
+                            shape_index: 1.62,
+                            thickness_min_mm: 0.05,
+                            thickness_max_mm: 1.85,
+                            volume_min_m3: 18500,
+                            volume_max_m3: 42600,
+                          },
+                          weather: {
+                            windSpeed: simWindSpeed,
+                            windDir: simWindDir,
+                            currentSpeed: simCurrentSpeed,
+                            waves: "1.0 m (Hs)",
+                            sst: "28.3°C",
+                          },
+                          impact: {
+                            coastlineDistanceKm: currentDistanceToCoast,
+                            etaHours: currentEtaHours,
+                            coastlineRegion: impactData?.coastline_region || "Alibaug & Raigad Coastal Belt, Maharashtra",
+                            mpaOverlapPct: impactData?.mpa_overlap_pct || 12.3,
+                            mpaOverlapKm2: impactData?.mpa_overlap_km2 || 25.8,
+                            fishingZoneOverlapPct: impactData?.fishing_zone_overlap_pct || 8.7,
+                            fishingZoneOverlapKm2: impactData?.fishing_zone_overlap_km2 || 18.1,
+                            riskLevel: impactData?.risk_level || "HIGH RISK",
+                          },
+                          vessels: dynamicMapVessels.map(v => ({
+                            rank: v.rank,
+                            name: v.name,
+                            score: v.score,
+                            imo: v.imo || "9438200",
+                            type: v.type || "Tanker",
+                            flag: v.flag || "Liberia",
+                            cpa: `${(v.score > 80 ? 1.2 : 8.4)} km`,
+                            minSog: `${v.speed} kts`,
+                            aisGap: `${(v.score > 80 ? 94 : 0)} min`,
+                          })),
+                        });
+                        triggerToast(`Downloaded Sahayya ${effectiveIncidentId} Telemetry Report (PDF)`);
+                      } catch (err) {
+                        console.error("PDF generation error:", err);
+                        triggerToast("Failed to compile PDF document.");
+                      }
                     }}
                     className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] bg-white hover:bg-[#F8FBFE] text-xs font-semibold text-slate-700 flex items-center gap-1.5 shadow-[0_2px_8px_rgba(30,95,191,0.06)] transition-all cursor-pointer btn-text"
+                    title="Download certified telemetry intelligence report in PDF format"
                   >
                     <Download className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Export</span>
+                    <span>Export Telemetry</span>
                   </button>
 
                   <button
@@ -540,7 +938,7 @@ export const IncidentDetailPage: React.FC = () => {
                     className="px-3.5 py-1.5 rounded-xl bg-[#0B2545] hover:bg-[#123A66] text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer btn-text"
                   >
                     <FileText className="w-3.5 h-3.5" />
-                    <span>Generate Report</span>
+                    <span>Generate PDF Dossier</span>
                   </button>
 
                   {/* Overflow Menu */}
@@ -553,7 +951,18 @@ export const IncidentDetailPage: React.FC = () => {
                     </button>
 
                     {showOverflowMenu && (
-                      <div className="absolute right-0 mt-2 w-48 bg-white border border-[#E1EEF9] rounded-2xl shadow-[0_12px_36px_rgba(30,95,191,0.18)] p-1.5 z-50 text-xs animate-fadeIn font-body">
+                      <div className="absolute right-0 mt-2 w-52 bg-white border border-[#E1EEF9] rounded-2xl shadow-[0_12px_36px_rgba(30,95,191,0.18)] p-1.5 z-50 text-xs animate-fadeIn font-body">
+                        <button
+                          onClick={() => {
+                            setShowOverflowMenu(false);
+                            fetchIncidentData();
+                            triggerToast("Forced resynchronization with Copernicus SAR / AIS API.");
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F8FBFE] text-slate-700 flex items-center gap-2 cursor-pointer font-medium"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5 text-sky-600" />
+                          <span>Re-fetch Telemetry</span>
+                        </button>
                         <button
                           onClick={() => {
                             setShowOverflowMenu(false);
@@ -564,26 +973,16 @@ export const IncidentDetailPage: React.FC = () => {
                           <Copy className="w-3.5 h-3.5 text-slate-400" />
                           <span>Duplicate Incident</span>
                         </button>
-                        <button
-                          onClick={() => {
-                            setShowOverflowMenu(false);
-                            triggerToast("Incident archived to national maritime registry.");
-                          }}
-                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F8FBFE] text-slate-700 flex items-center gap-2 cursor-pointer font-medium"
-                        >
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Archive Record</span>
-                        </button>
                         <div className="my-1 border-t border-slate-100" />
                         <button
                           onClick={() => {
                             setShowOverflowMenu(false);
-                            triggerToast("Operation restricted: Live Ministry incident cannot be deleted.");
+                            triggerToast("Operation restricted: Active Coast Guard investigation locked.");
                           }}
                           className="w-full text-left px-3 py-2 rounded-xl hover:bg-rose-50 text-rose-600 font-semibold flex items-center gap-2 cursor-pointer"
                         >
                           <AlertOctagon className="w-3.5 h-3.5" />
-                          <span>Delete Incident</span>
+                          <span>Lock / Archive File</span>
                         </button>
                       </div>
                     )}
@@ -591,7 +990,7 @@ export const IncidentDetailPage: React.FC = () => {
                 </div>
 
                 {/* Status Stepper Component */}
-                <div className="w-full sm:w-[500px]">
+                <div className="w-full sm:w-[540px] md:w-[580px] xl:w-[600px]">
                   <StatusStepper
                     stages={INCIDENT_DATA.statusStages}
                     onAdvanceStage={async (stageId) => {
@@ -608,6 +1007,7 @@ export const IncidentDetailPage: React.FC = () => {
                       try {
                         await sahayyaApi.incidents.updateStatus(effectiveIncidentId, next);
                         triggerToast(`Incident status updated to: ${next.toUpperCase()}`);
+                        fetchIncidentData();
                       } catch {
                         triggerToast(`Status advanced to: ${next.toUpperCase()}`);
                       }
@@ -618,21 +1018,25 @@ export const IncidentDetailPage: React.FC = () => {
             </div>
 
             {/* ================================================================= */}
-            {/* ROW OF 4 STAT CARDS                                              */}
+            {/* ROW OF 4 CORE STAT CARDS (DYNAMIC)                                */}
             {/* ================================================================= */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 font-body">
               {/* Card 1: Spill Area */}
               <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex items-start justify-between">
                 <div>
                   <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-display">
-                    Spill Area
+                    Detected Spill Area
                   </div>
-                  <div className="text-2xl font-bold tracking-tight text-[#0B2545] mt-1 kpi-number">276.04 km²</div>
+                  <div className="text-2xl font-bold tracking-tight text-[#0B2545] mt-1 font-mono">
+                    {currentAreaKm2.toFixed(2)} km²
+                  </div>
                   <div className="flex items-center gap-1.5 mt-1">
-                    <span className="text-[10px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded badge-text">
-                      ↑ 12.4%
+                    <span className="text-[10px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded badge-text font-mono">
+                      {spillDNA?.perimeter_km ? `Perimeter: ${spillDNA.perimeter_km} km` : "↑ 12.4% vs Pass"}
                     </span>
-                    <span className="text-[10px] text-slate-400 font-normal">From previous estimate</span>
+                    <span className="text-[10px] text-slate-400 font-normal">
+                      {isLiveTelemetry ? "SAR ML U-Net" : "Sentinel-1A SAR"}
+                    </span>
                   </div>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-sky-50 text-[#1E5FBF] border border-sky-200/80 flex items-center justify-center shrink-0 shadow-2xs">
@@ -644,13 +1048,16 @@ export const IncidentDetailPage: React.FC = () => {
               <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex items-start justify-between">
                 <div>
                   <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-display">
-                    Probable Origin
+                    Probable Origin Centroid
                   </div>
                   <div className="text-xl font-semibold text-[#0B2545] mt-1 font-mono data-mono">
-                    18.78°N, 72.51°E
+                    {currentCoords[0].toFixed(2)}°N, {currentCoords[1].toFixed(2)}°E
                   </div>
-                  <div className="text-[10px] text-amber-600 font-semibold mt-1 font-body">
-                    T - 18 h to T - 30 h
+                  <div className="text-[10px] text-amber-600 font-semibold mt-1 font-body flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    <span>
+                      {originZone?.confidence_pct ? `${originZone.confidence_pct}% Hindcast Confidence` : "T - 18h to T - 30h"}
+                    </span>
                   </div>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 border border-amber-200/80 flex items-center justify-center shrink-0 shadow-2xs">
@@ -664,9 +1071,12 @@ export const IncidentDetailPage: React.FC = () => {
                   <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-display">
                     Distance to Coast
                   </div>
-                  <div className="text-2xl font-bold tracking-tight text-[#0B2545] mt-1 kpi-number">38 km</div>
-                  <div className="text-[11px] text-[#0EA5B7] font-semibold mt-1 font-body">
-                    ETA ~ 16.4 hours (Alibaug)
+                  <div className="text-2xl font-bold tracking-tight text-[#0B2545] mt-1 font-mono">
+                    {currentDistanceToCoast.toFixed(1)} km
+                  </div>
+                  <div className="text-[11px] text-[#0EA5B7] font-semibold mt-1 font-body flex items-center gap-1">
+                    <span>ETA ~ {currentEtaHours.toFixed(1)} hours</span>
+                    <span className="text-slate-400 font-normal">({impactData?.coastline_region?.split(",")[0] || "Alibaug"})</span>
                   </div>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-teal-50 text-[#0EA5B7] border border-teal-200/80 flex items-center justify-center shrink-0 shadow-2xs">
@@ -678,18 +1088,29 @@ export const IncidentDetailPage: React.FC = () => {
               <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex items-start justify-between">
                 <div>
                   <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-display">
-                    Severity Score
+                    Severity Risk Index
                   </div>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-2xl font-bold tracking-tight text-[#0B2545] kpi-number">82</span>
+                    <span className="text-2xl font-bold tracking-tight text-[#0B2545] font-mono">
+                      {currentSeverityScore}
+                    </span>
                     <span className="text-xs text-slate-400 font-mono">/ 100</span>
-                    <span className="bg-rose-100 text-rose-700 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-rose-200 badge-text">
-                      High Risk
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border badge-text ${
+                      currentSeverityScore >= 80
+                        ? "bg-rose-100 text-rose-700 border-rose-200"
+                        : currentSeverityScore >= 50
+                        ? "bg-amber-100 text-amber-700 border-amber-200"
+                        : "bg-emerald-100 text-emerald-700 border-emerald-200"
+                    }`}>
+                      {currentSeverityScore >= 80 ? "Critical Tier" : currentSeverityScore >= 50 ? "Moderate" : "Low Risk"}
                     </span>
                   </div>
-                  {/* Semicircular Gauge Arc Indicator */}
+                  {/* Gauge Arc Indicator */}
                   <div className="w-32 h-2 bg-slate-100 rounded-full overflow-hidden mt-2 border border-slate-200/60">
-                    <div className="h-full w-[82%] bg-gradient-to-r from-amber-500 to-rose-600 rounded-full" />
+                    <div
+                      className="h-full bg-gradient-to-r from-amber-500 to-rose-600 rounded-full transition-all duration-700"
+                      style={{ width: `${Math.min(100, Math.max(10, currentSeverityScore))}%` }}
+                    />
                   </div>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 border border-rose-200/80 flex items-center justify-center shrink-0 shadow-2xs">
@@ -705,40 +1126,41 @@ export const IncidentDetailPage: React.FC = () => {
               <div className="flex items-center gap-2">
                 <Wind className="w-4 h-4 text-[#1E5FBF]" />
                 <span className="heading-section text-xs uppercase tracking-wider text-[#0B2545]">
-                  Environmental Conditions (Now)
+                  Hydro-Meteorological Telemetry (Now)
                 </span>
+                <span className="text-[10px] font-mono text-slate-400">INCOIS / ECMWF Marine Buoy</span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-8 w-full md:w-auto text-xs">
                 <div className="flex items-center gap-2">
                   <Wind className="w-3.5 h-3.5 text-slate-400" />
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-body">Wind</span>
-                    <span className="font-mono font-medium text-slate-700 data-mono">5.1 m/s (289° W)</span>
+                    <span className="text-[10px] text-slate-400 block font-body">Surface Wind</span>
+                    <span className="font-mono font-bold text-slate-700 data-mono">5.1 m/s (289° WNW)</span>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Waves className="w-3.5 h-3.5 text-[#0EA5B7]" />
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-body">Waves</span>
-                    <span className="font-mono font-medium text-slate-700 data-mono">1.0 m</span>
+                    <span className="text-[10px] text-slate-400 block font-body">Significant Waves</span>
+                    <span className="font-mono font-bold text-slate-700 data-mono">1.0 m (Hs)</span>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Navigation className="w-3.5 h-3.5 text-[#1E5FBF]" />
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-body">Current</span>
-                    <span className="font-mono font-medium text-slate-700 data-mono">0.67 m/s (189° S)</span>
+                    <span className="text-[10px] text-slate-400 block font-body">Ocean Current</span>
+                    <span className="font-mono font-bold text-slate-700 data-mono">0.67 m/s (189° S)</span>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Thermometer className="w-3.5 h-3.5 text-amber-500" />
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-body">SST</span>
-                    <span className="font-mono font-medium text-slate-700 data-mono">28.3°C</span>
+                    <span className="text-[10px] text-slate-400 block font-body">Sea Surface Temp</span>
+                    <span className="font-mono font-bold text-slate-700 data-mono">28.3°C</span>
                   </div>
                 </div>
               </div>
@@ -750,7 +1172,7 @@ export const IncidentDetailPage: React.FC = () => {
             <div className="flex items-center justify-between gap-4 p-1.5 bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-sm font-body">
               <div className="flex items-center gap-2 overflow-x-auto">
                 {[
-                  { id: "tactical", label: "Tactical Intelligence Dossier", icon: Activity, badge: "10 Panels" },
+                  { id: "tactical", label: "Tactical Intelligence Dossier", icon: Activity, badge: "Forensic Active" },
                   { id: "recovery", label: "Recovery Monitoring", icon: Sparkles, badge: "Stage 21" },
                   { id: "digitaltwin", label: "Marine Digital Twin Simulator", icon: Compass, badge: "Stage 20" },
                 ].map((t) => {
@@ -783,1219 +1205,1158 @@ export const IncidentDetailPage: React.FC = () => {
               </div>
 
               <div className="hidden sm:flex items-center gap-2 pr-3 text-xs font-mono text-slate-500 data-mono">
-                <span>EEZ Grid: 18.78°N / 72.51°E</span>
+                <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                <span>EEZ Grid: {currentCoords[0].toFixed(2)}°N / {currentCoords[1].toFixed(2)}°E</span>
               </div>
             </div>
 
             {activeIncidentTab === "tactical" && (
               <>
                 {/* ================================================================= */}
-                {/* MAIN ROW: 3 PANELS (Overview, Carousel, Mini-Map)                */}
+                {/* MAIN ROW: 3 PANELS (Overview, Carousel, Dynamic Mini-Map)         */}
                 {/* ================================================================= */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              {/* PANEL A: Incident Overview (4 cols) */}
-              <div className="lg:col-span-4 p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between font-body">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-[#1E5FBF]" />
-                      <h2 className="heading-section text-xs uppercase tracking-wider text-[#0B2545]">
-                        Incident Overview
-                      </h2>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setTempDescription(overviewDescription);
-                        setTempType(overviewType);
-                        setTempAgency(overviewAgency);
-                        setShowEditOverviewModal(true);
-                      }}
-                      className="px-2 py-1 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-[#0B2545] text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
-                      title="Edit incident details"
-                    >
-                      <Edit3 className="w-3 h-3" />
-                      <span>Edit</span>
-                    </button>
-                  </div>
-
-                  <p className="body-description text-sm sm:text-[15px] text-slate-700 leading-relaxed mt-3 p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] font-body">
-                    {overviewDescription}
-                  </p>
-
-                  {/* 2x2 Detail Grid */}
-                  <div className="grid grid-cols-2 gap-2 mt-3 text-[11px]">
-                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                      <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-medium">
-                        <AlertOctagon className="w-3 h-3 text-amber-500" />
-                        <span>Incident Type</span>
-                      </div>
-                      <div className="font-bold text-[#0B2545] mt-0.5 font-body text-xs">{overviewType}</div>
-                    </div>
-
-                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                      <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-medium">
-                        <Satellite className="w-3 h-3 text-[#1E5FBF]" />
-                        <span>Detection Source</span>
-                      </div>
-                      <div className="font-bold text-[#0B2545] mt-0.5 font-mono text-xs">
-                        {INCIDENT_DATA.overview.source}
-                      </div>
-                    </div>
-
-                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                      <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-medium">
-                        <Clock className="w-3 h-3 text-slate-500" />
-                        <span>Detected At</span>
-                      </div>
-                      <div className="font-bold text-[#0B2545] mt-0.5 font-mono text-xs">
-                        {INCIDENT_DATA.overview.detected}
-                      </div>
-                    </div>
-
-                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                      <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-medium">
-                        <Shield className="w-3 h-3 text-emerald-600" />
-                        <span>Investigating Agency</span>
-                      </div>
-                      <div className="font-bold text-[#0B2545] mt-0.5 truncate font-body text-xs">{overviewAgency}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-3 pt-2.5 border-t border-[#E1EEF9] flex items-center justify-between text-[10px] text-slate-500 font-body">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                    <span className="font-bold text-emerald-700">Status: {INCIDENT_DATA.overview.status}</span>
-                  </div>
-                  <div className="flex items-center gap-1 font-mono">
-                    <RotateCcw className="w-3 h-3 text-slate-400" />
-                    <span>Updated: {INCIDENT_DATA.overview.lastUpdated}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* PANEL B: Hero Image Carousel (4 cols) */}
-              <div className="lg:col-span-4 p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <Eye className="w-4 h-4 text-[#1E5FBF]" />
-                      <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                        Tactical Imagery ({carouselIndex + 1}/{INCIDENT_DATA.carouselImages.length})
-                      </h2>
-                    </div>
-                    <span className="text-[10px] font-mono text-slate-400">Click to enlarge</span>
-                  </div>
-
-                  {/* Hero Visual Container */}
-                  <div
-                    onClick={() => setLightboxImage(currentCarouselSlide.url)}
-                    className="relative mt-3 h-52 rounded-2xl overflow-hidden group cursor-zoom-in bg-black shadow-inner"
-                  >
-                    <img
-                      src={currentCarouselSlide.url}
-                      alt={currentCarouselSlide.title}
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    />
-
-                    {/* Floating Callout Label */}
-                    <div className="absolute top-2.5 left-2.5 bg-[#0B2545]/90 backdrop-blur-md text-white px-2.5 py-1 rounded-xl text-[10px] font-bold border border-white/20 flex items-center gap-1.5 shadow-md">
-                      <MapPin className="w-3 h-3 text-rose-400" />
-                      <span>{currentCarouselSlide.callout}</span>
-                    </div>
-
-                    {/* Compass Icon Top Right */}
-                    <div className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center border border-white/20">
-                      <Compass className="w-4 h-4" />
-                    </div>
-
-                    {/* Chevrons */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCarouselIndex((prev) =>
-                          prev === 0 ? INCIDENT_DATA.carouselImages.length - 1 : prev - 1
-                        );
-                      }}
-                      className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer transition-colors shadow-md"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCarouselIndex((prev) => (prev + 1) % INCIDENT_DATA.carouselImages.length);
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer transition-colors shadow-md"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-
-                    {/* Bottom Caption Overlay */}
-                    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2 text-white">
-                      <div className="text-[11px] font-bold truncate">{currentCarouselSlide.title}</div>
-                      <div className="text-[9px] text-slate-300 truncate">{currentCarouselSlide.caption}</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Dot Indicators */}
-                <div className="mt-3 pt-2.5 border-t border-[#E1EEF9] flex items-center justify-center gap-1.5">
-                  {INCIDENT_DATA.carouselImages.map((_, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setCarouselIndex(idx)}
-                      className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                        carouselIndex === idx ? "w-6 bg-[#1E5FBF]" : "w-1.5 bg-slate-300 hover:bg-slate-400"
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* PANEL C: Incident Location (Mini-Map) (4 cols) */}
-              <div className="lg:col-span-4 p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <MapIcon className="w-4 h-4 text-[#1E5FBF]" />
-                      <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                        Incident Location (Mini-Map)
-                      </h2>
-                    </div>
-                    <button
-                      onClick={() => navigate("/dashboard")}
-                      className="text-[11px] font-semibold text-[#1E5FBF] hover:underline flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>Full Map View</span>
-                      <span>&rarr;</span>
-                    </button>
-                  </div>
-
-                  <div className="mt-3">
-                    <IncidentMiniMap onNavigateToFullMap={() => navigate("/dashboard")} />
-                  </div>
-                </div>
-
-                <div className="mt-2 text-[10px] text-slate-500 flex justify-between font-mono">
-                  <span>Projection: WGS84 Mercator</span>
-                  <span className="text-emerald-700 font-semibold">Feed: AIS + SAR Layer</span>
-                </div>
-              </div>
-            </div>
-
-            {/* ================================================================= */}
-            {/* SECOND ROW: 3 PANELS (Spill Characteristics, Evolution, Vessels) */}
-            {/* ================================================================= */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* PANEL D: Spill Characteristics */}
-              <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <div className="w-5 h-5 rounded-md bg-indigo-50 text-[#6366F1] border border-indigo-200/60 flex items-center justify-center">
-                        <Sparkles className="w-3.5 h-3.5" />
-                      </div>
-                      <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                        Spill Characteristics (Current Estimate)
-                      </h2>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center gap-3">
-                    {/* Slick Shape Gradient Thumbnail */}
-                    <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-[#0B1D35] to-[#123A66] border border-[#E1EEF9] flex items-center justify-center p-2 shrink-0 shadow-inner relative overflow-hidden">
-                      <div className="w-12 h-10 rounded-full bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 blur-[1px] opacity-90 shadow-[0_0_12px_rgba(239,68,68,0.7)]" />
-                    </div>
-
-                    {/* 2x2 Stat Grid */}
-                    <div className="grid grid-cols-2 gap-1.5 flex-1 text-[10px] font-mono">
-                      <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                        <span className="text-slate-400 block font-sans text-[9px]">Area</span>
-                        <span className="font-bold text-[#0B2545]">{INCIDENT_DATA.spillDNA.area}</span>
-                      </div>
-                      <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                        <span className="text-slate-400 block font-sans text-[9px]">Perimeter</span>
-                        <span className="font-bold text-[#0B2545]">{INCIDENT_DATA.spillDNA.perimeter}</span>
-                      </div>
-                      <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                        <span className="text-slate-400 block font-sans text-[9px]">Length (Major)</span>
-                        <span className="font-bold text-[#0B2545]">{INCIDENT_DATA.spillDNA.lengthMajor}</span>
-                      </div>
-                      <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                        <span className="text-slate-400 block font-sans text-[9px]">Width (Minor)</span>
-                        <span className="font-bold text-[#0B2545]">{INCIDENT_DATA.spillDNA.widthMinor}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Thickness & Volume secondary rows */}
-                  <div className="grid grid-cols-2 gap-2 mt-2 text-[10px] font-mono">
-                    <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                      <span className="text-slate-400 block font-sans text-[9px]">Thickness (Est.)</span>
-                      <span className="font-bold text-amber-600">0.1 &ndash; 1.2 mm</span>
-                    </div>
-                    <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                      <span className="text-slate-400 block font-sans text-[9px]">Volume (Est.)</span>
-                      <span className="font-bold text-rose-600">280 &ndash; 1,200 m³</span>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => setShowDetailedAnalysisModal(true)}
-                  className="w-full mt-3 py-2 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white text-xs font-bold transition-all cursor-pointer text-center shadow-sm"
-                >
-                  View Detailed Analysis &rarr;
-                </button>
-              </div>
-
-              {/* PANEL E: Spill Evolution */}
-              <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-[#1E5FBF]" />
-                      <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                        Spill Evolution (Observed &amp; Forecast)
-                      </h2>
-                    </div>
-
-                    {/* Observed vs Model Toggle */}
-                    <div className="flex items-center p-0.5 rounded-xl bg-[#F0F7FD] border border-[#E1EEF9] text-[10px] font-bold">
-                      <button
-                        onClick={() => setEvolutionDataSource("Observed")}
-                        className={`px-2 py-0.5 rounded-lg transition-colors cursor-pointer ${
-                          evolutionDataSource === "Observed"
-                            ? "bg-[#1E5FBF] text-white shadow-2xs"
-                            : "text-slate-600 hover:text-slate-900"
-                        }`}
-                      >
-                        Observed
-                      </button>
-                      <button
-                        onClick={() => setEvolutionDataSource("Model")}
-                        className={`px-2 py-0.5 rounded-lg transition-colors cursor-pointer ${
-                          evolutionDataSource === "Model"
-                            ? "bg-[#1E5FBF] text-white shadow-2xs"
-                            : "text-slate-600 hover:text-slate-900"
-                        }`}
-                      >
-                        Model
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 6 Thumbnail Frames */}
-                  <div className="grid grid-cols-6 gap-1 mt-3">
-                    {[
-                      { offset: "-24h", time: "11 Sep 17:00", idx: 0 },
-                      { offset: "-12h", time: "12 Sep 05:00", idx: 1 },
-                      { offset: "Now", time: "12 Sep 17:00", idx: 2 },
-                      { offset: "+12h", time: "13 Sep 05:00", idx: 3 },
-                      { offset: "+24h", time: "14 Sep 17:00", idx: 4 },
-                      { offset: "+48h", time: "14 Sep 17:00", idx: 6 },
-                    ].map((f) => {
-                      const isSelected = selectedTimelineIndex === f.idx;
-                      return (
+                  {/* PANEL A: Incident Overview (4 cols) */}
+                  <div className="lg:col-span-4 p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between font-body">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-[#1E5FBF]" />
+                          <h2 className="heading-section text-xs uppercase tracking-wider text-[#0B2545]">
+                            Incident Dossier Overview
+                          </h2>
+                        </div>
                         <button
-                          key={f.offset}
-                          onClick={() => setSelectedTimelineIndex(f.idx)}
-                          className={`rounded-xl overflow-hidden border p-1 text-center transition-all cursor-pointer ${
-                            isSelected
-                              ? "border-[#1E5FBF] bg-sky-50 shadow-xs ring-1 ring-[#1E5FBF]"
-                              : "border-[#E1EEF9] bg-[#F8FBFE] hover:border-sky-300"
-                          }`}
+                          onClick={() => {
+                            setTempDescription(overviewDescription);
+                            setTempType(overviewType);
+                            setTempAgency(overviewAgency);
+                            setShowEditOverviewModal(true);
+                          }}
+                          className="px-2 py-1 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-[#0B2545] text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                          title="Edit incident details"
                         >
-                          <div className="w-full h-7 rounded-lg bg-black overflow-hidden mb-1 flex items-center justify-center">
-                            <div
-                              className={`rounded-full ${
-                                f.idx < 2
-                                  ? "w-2 h-2 bg-amber-500"
-                                  : f.idx === 2
-                                  ? "w-3 h-3 bg-rose-500 animate-pulse"
-                                  : "w-3.5 h-3.5 bg-rose-700 opacity-70"
+                          <Edit3 className="w-3 h-3" />
+                          <span>Edit</span>
+                        </button>
+                      </div>
+
+                      <p className="body-description text-sm text-slate-700 leading-relaxed mt-3 p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] font-body">
+                        {overviewDescription}
+                      </p>
+
+                      {/* 2x2 Detail Grid */}
+                      <div className="grid grid-cols-2 gap-2 mt-3 text-[11px]">
+                        <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                          <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-medium">
+                            <AlertOctagon className="w-3 h-3 text-amber-500" />
+                            <span>Incident Classification</span>
+                          </div>
+                          <div className="font-bold text-[#0B2545] mt-0.5 font-body text-xs">{overviewType}</div>
+                        </div>
+
+                        <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                          <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-medium">
+                            <Satellite className="w-3 h-3 text-[#1E5FBF]" />
+                            <span>Detection Sensor</span>
+                          </div>
+                          <div className="font-bold text-[#0B2545] mt-0.5 font-mono text-xs">
+                            {incidentDetail?.detection_source || INCIDENT_DATA.overview.source}
+                          </div>
+                        </div>
+
+                        <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                          <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-medium">
+                            <Clock className="w-3 h-3 text-slate-500" />
+                            <span>Detected Timestamp</span>
+                          </div>
+                          <div className="font-bold text-[#0B2545] mt-0.5 font-mono text-xs truncate">
+                            {incidentDetail?.detected_at ? new Date(incidentDetail.detected_at).toUTCString().slice(5, 22) : INCIDENT_DATA.overview.detected}
+                          </div>
+                        </div>
+
+                        <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                          <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-medium">
+                            <Shield className="w-3 h-3 text-emerald-600" />
+                            <span>Lead Agency</span>
+                          </div>
+                          <div className="font-bold text-[#0B2545] mt-0.5 truncate font-body text-xs">{overviewAgency}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 pt-2.5 border-t border-[#E1EEF9] flex items-center justify-between text-[10px] text-slate-500 font-body">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                        <span className="font-bold text-emerald-700">Audit Status: Verified Evidence</span>
+                      </div>
+                      <div className="flex items-center gap-1 font-mono">
+                        <RotateCcw className="w-3 h-3 text-slate-400" />
+                        <span>Sync: {lastUpdatedTime}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* PANEL B: Hero Image Carousel (4 cols) */}
+                  <div className="lg:col-span-4 p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <Eye className="w-4 h-4 text-[#1E5FBF]" />
+                          <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                            Tactical Imagery ({carouselIndex + 1}/{INCIDENT_DATA.carouselImages.length})
+                          </h2>
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-400">Click to enlarge</span>
+                      </div>
+
+                      {/* Hero Visual Container */}
+                      <div
+                        onClick={() => setLightboxImage(currentCarouselSlide.url)}
+                        className="relative mt-3 h-52 rounded-2xl overflow-hidden group cursor-zoom-in bg-black shadow-inner"
+                      >
+                        <img
+                          src={currentCarouselSlide.url}
+                          alt={currentCarouselSlide.title}
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        />
+
+                        {/* Floating Callout Label */}
+                        <div className="absolute top-2.5 left-2.5 bg-[#0B2545]/90 backdrop-blur-md text-white px-2.5 py-1 rounded-xl text-[10px] font-bold border border-white/20 flex items-center gap-1.5 shadow-md font-mono">
+                          <MapPin className="w-3 h-3 text-rose-400" />
+                          <span>{currentCarouselSlide.callout}</span>
+                        </div>
+
+                        {/* Compass Icon Top Right */}
+                        <div className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center border border-white/20">
+                          <Compass className="w-4 h-4" />
+                        </div>
+
+                        {/* Chevrons */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCarouselIndex((prev) =>
+                              prev === 0 ? INCIDENT_DATA.carouselImages.length - 1 : prev - 1
+                            );
+                          }}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer transition-colors shadow-md"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCarouselIndex((prev) => (prev + 1) % INCIDENT_DATA.carouselImages.length);
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer transition-colors shadow-md"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+
+                        {/* Bottom Caption Overlay */}
+                        <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent p-2 text-white font-body">
+                          <div className="text-[11px] font-bold truncate">{currentCarouselSlide.title}</div>
+                          <div className="text-[9px] text-slate-300 truncate">{currentCarouselSlide.caption}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Dot Indicators */}
+                    <div className="mt-3 pt-2.5 border-t border-[#E1EEF9] flex items-center justify-center gap-1.5">
+                      {INCIDENT_DATA.carouselImages.map((_, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setCarouselIndex(idx)}
+                          className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                            carouselIndex === idx ? "w-6 bg-[#1E5FBF]" : "w-1.5 bg-slate-300 hover:bg-slate-400"
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* PANEL C: Incident Location & Investigation Map (4 cols) */}
+                  <div className="lg:col-span-4 p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <MapIcon className="w-4 h-4 text-[#1E5FBF]" />
+                          <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                            Tactical Multi-Layer Map
+                          </h2>
+                        </div>
+                        <button
+                          onClick={() => navigate("/dashboard")}
+                          className="text-[11px] font-semibold text-[#1E5FBF] hover:underline flex items-center gap-1 cursor-pointer font-body"
+                        >
+                          <span>Expanded View</span>
+                          <span>&rarr;</span>
+                        </button>
+                      </div>
+
+                      <div className="mt-3">
+                        <IncidentMiniMap
+                          incidentCode={effectiveIncidentId}
+                          center={currentCoords}
+                          originCoord={currentCoords}
+                          vessels={dynamicMapVessels}
+                          cgAssets={dynamicMapAssets}
+                          onNavigateToFullMap={() => navigate("/dashboard")}
+                          isSimulated={!isLiveTelemetry}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-2 text-[10px] text-slate-500 flex justify-between font-mono">
+                      <span>Projection: WGS84 Mercator</span>
+                      <span className="text-emerald-700 font-semibold">Feed: AIS + SAR Layers</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ================================================================= */}
+                {/* SECOND ROW: 3 PANELS (Spill Characteristics, Evolution, Vessels) */}
+                {/* ================================================================= */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  {/* PANEL D: Forensic Spill Characteristics */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between font-body">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <div className="w-5 h-5 rounded-md bg-indigo-50 text-[#6366F1] border border-indigo-200/60 flex items-center justify-center">
+                            <Sparkles className="w-3.5 h-3.5" />
+                          </div>
+                          <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                            Forensic Spill Morphology (DNA)
+                          </h2>
+                        </div>
+                        <span className="text-[10px] font-mono text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                          {spillDNA?.shape_index ? `Index: ${spillDNA.shape_index}` : "SAR Analyzed"}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 flex items-center gap-3">
+                        {/* Dynamic SVG Footprint Geometry Illustration */}
+                        <div className="w-24 h-24 rounded-2xl bg-[#0B1D35] border border-[#1E5FBF]/40 flex items-center justify-center shrink-0 shadow-inner relative overflow-hidden p-2">
+                          <svg viewBox="0 0 100 100" className="w-full h-full filter drop-shadow-[0_0_8px_rgba(239,68,68,0.7)]">
+                            {/* Outer Dispersion Sheen */}
+                            <path
+                              d="M20,50 Q25,25 55,20 Q85,25 80,55 Q85,85 50,82 Q15,85 20,50 Z"
+                              fill="rgba(239, 68, 68, 0.25)"
+                              stroke="#EF4444"
+                              strokeWidth="1.5"
+                              strokeDasharray="2,2"
+                            />
+                            {/* Inner Heavy Crude Core */}
+                            <ellipse
+                              cx="52"
+                              cy="50"
+                              rx={spillDNA?.length_major_km ? Math.min(30, spillDNA.length_major_km) : 22}
+                              ry={spillDNA?.width_minor_km ? Math.min(18, spillDNA.width_minor_km * 1.5) : 11}
+                              transform={`rotate(${spillDNA?.orientation_deg || 38.5} 52 50)`}
+                              fill="url(#slickGradient)"
+                            />
+                            {/* Principal Axis Line */}
+                            <line
+                              x1="28"
+                              y1="68"
+                              x2="76"
+                              y2="32"
+                              stroke="#FBBF24"
+                              strokeWidth="1.2"
+                              strokeDasharray="3,2"
+                            />
+                            {/* Centroid Point */}
+                            <circle cx="52" cy="50" r="3" fill="#FFFFFF" stroke="#EF4444" strokeWidth="1.5" />
+                            <defs>
+                              <linearGradient id="slickGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stopColor="#DC2626" />
+                                <stop offset="50%" stopColor="#EA580C" />
+                                <stop offset="100%" stopColor="#B45309" />
+                              </linearGradient>
+                            </defs>
+                          </svg>
+                        </div>
+
+                        {/* 2x2 Metric Grid */}
+                        <div className="grid grid-cols-2 gap-1.5 flex-1 text-[10px] font-mono">
+                          <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                            <span className="text-slate-400 block font-sans text-[9px]">Surface Area</span>
+                            <span className="font-bold text-[#0B2545]">{currentAreaKm2.toFixed(2)} km²</span>
+                          </div>
+                          <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                            <span className="text-slate-400 block font-sans text-[9px]">Perimeter</span>
+                            <span className="font-bold text-[#0B2545]">
+                              {spillDNA?.perimeter_km ? `${spillDNA.perimeter_km} km` : "312.5 km"}
+                            </span>
+                          </div>
+                          <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                            <span className="text-slate-400 block font-sans text-[9px]">Major Axis</span>
+                            <span className="font-bold text-[#0B2545]">
+                              {spillDNA?.length_major_km ? `${spillDNA.length_major_km} km` : "31.2 km"}
+                            </span>
+                          </div>
+                          <div className="p-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                            <span className="text-slate-400 block font-sans text-[9px]">Minor Axis</span>
+                            <span className="font-bold text-[#0B2545]">
+                              {spillDNA?.width_minor_km ? `${spillDNA.width_minor_km} km` : "12.8 km"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Thickness & Volume secondary rows */}
+                      <div className="grid grid-cols-2 gap-2 mt-2 text-[10px] font-mono">
+                        <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                          <span className="text-slate-400 block font-sans text-[9px]">Estimated Thickness</span>
+                          <span className="font-bold text-amber-600">
+                            {spillDNA?.thickness_min_mm ? `${spillDNA.thickness_min_mm} – ${spillDNA.thickness_max_mm} mm` : "0.05 – 1.85 mm"}
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                          <span className="text-slate-400 block font-sans text-[9px]">Calculated Volume</span>
+                          <span className="font-bold text-rose-600">
+                            {spillDNA?.volume_min_m3 ? `${Math.round(spillDNA.volume_min_m3).toLocaleString()} – ${Math.round(spillDNA.volume_max_m3).toLocaleString()} m³` : "18,500 – 42,600 m³"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setShowDetailedAnalysisModal(true)}
+                      className="w-full mt-3 py-2 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white text-xs font-bold transition-all cursor-pointer text-center shadow-sm"
+                    >
+                      View Forensic Spectrometry Analysis &rarr;
+                    </button>
+                  </div>
+
+                  {/* PANEL E: Spill Evolution (Interactive Timeline) */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-[#1E5FBF]" />
+                          <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                            Kinematic Spill Evolution
+                          </h2>
+                        </div>
+
+                        {/* Observed vs Model Toggle */}
+                        <div className="flex items-center p-0.5 rounded-xl bg-[#F0F7FD] border border-[#E1EEF9] text-[10px] font-bold">
+                          <button
+                            onClick={() => setEvolutionDataSource("Observed")}
+                            className={`px-2 py-0.5 rounded-lg transition-colors cursor-pointer ${
+                              evolutionDataSource === "Observed"
+                                ? "bg-[#1E5FBF] text-white shadow-2xs"
+                                : "text-slate-600 hover:text-slate-900"
+                            }`}
+                          >
+                            Observed
+                          </button>
+                          <button
+                            onClick={() => setEvolutionDataSource("Model")}
+                            className={`px-2 py-0.5 rounded-lg transition-colors cursor-pointer ${
+                              evolutionDataSource === "Model"
+                                ? "bg-[#1E5FBF] text-white shadow-2xs"
+                                : "text-slate-600 hover:text-slate-900"
+                            }`}
+                          >
+                            Lagrangian
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 7 Timeline Snapshot Cards */}
+                      <div className="grid grid-cols-7 gap-1 mt-3">
+                        {timelinePoints.map((f, idx) => {
+                          const isSelected = selectedTimelineIndex === idx;
+                          return (
+                            <button
+                              key={f.offset}
+                              onClick={() => setSelectedTimelineIndex(idx)}
+                              className={`rounded-xl overflow-hidden border p-1 text-center transition-all cursor-pointer ${
+                                isSelected
+                                  ? "border-[#1E5FBF] bg-sky-50 shadow-xs ring-1 ring-[#1E5FBF]"
+                                  : "border-[#E1EEF9] bg-[#F8FBFE] hover:border-sky-300"
                               }`}
+                            >
+                              <div className="w-full h-7 rounded-lg bg-[#0B1D35] overflow-hidden mb-1 flex items-center justify-center">
+                                <div
+                                  className={`rounded-full ${
+                                    idx < 2
+                                      ? "w-2.5 h-2.5 bg-amber-500"
+                                      : idx === 2
+                                      ? "w-3 h-3 bg-rose-500 animate-pulse ring-2 ring-rose-300"
+                                      : "w-3.5 h-3.5 bg-rose-600 opacity-80"
+                                  }`}
+                                />
+                              </div>
+                              <div className="text-[9px] font-bold text-[#0B2545] truncate">
+                                {f.offset}
+                              </div>
+                              <div className="text-[7.5px] text-slate-400 font-mono truncate">
+                                {f.area} km²
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Interactive Scrubber Slider */}
+                      <div className="mt-3 px-1">
+                        <input
+                          type="range"
+                          min="0"
+                          max="6"
+                          value={selectedTimelineIndex}
+                          onChange={(e) => setSelectedTimelineIndex(Number(e.target.value))}
+                          className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1E5FBF]"
+                        />
+                        <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-1">
+                          <span>-24h Hindcast</span>
+                          <span className="text-rose-600 font-bold">
+                            {activeTimelineFrame.offset} ({activeTimelineFrame.area} km² · {activeTimelineFrame.dist} km to coast)
+                          </span>
+                          <span>+48h Forecast</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 pt-2.5 border-t border-[#E1EEF9] flex items-center justify-between font-body">
+                      <button
+                        onClick={() => setIsPlayingTimeline(!isPlayingTimeline)}
+                        className="px-3 py-1.5 rounded-xl bg-[#F0F7FD] hover:bg-[#E1EEF9] text-[#0B2545] font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer border border-[#E1EEF9]"
+                      >
+                        {isPlayingTimeline ? <Pause className="w-3.5 h-3.5 text-rose-600" /> : <Play className="w-3.5 h-3.5 text-[#1E5FBF]" />}
+                        <span>{isPlayingTimeline ? "Pause Playback" : "Play Simulation"}</span>
+                      </button>
+
+                      <button
+                        onClick={() => setShowCompareModelModal(true)}
+                        className="text-xs font-bold text-[#1E5FBF] hover:underline cursor-pointer flex items-center gap-1"
+                      >
+                        <span>Compare with Model</span>
+                        <span>&rarr;</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* PANEL F: Vessel Candidates Attribution */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between font-body">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <Ship className="w-4 h-4 text-[#0B2545]" />
+                          <h2 className="heading-section text-xs uppercase tracking-wider text-[#0B2545]">
+                            Vessel Attribution Roster ({dynamicMapVessels.length})
+                          </h2>
+                        </div>
+                        <button
+                          onClick={() => setShowAllCandidatesModal(true)}
+                          className="text-[11px] font-semibold text-[#1E5FBF] hover:underline cursor-pointer font-body"
+                        >
+                          View Full Roster &rarr;
+                        </button>
+                      </div>
+
+                      {/* Candidate Vessel Rows */}
+                      <div className="mt-2.5 space-y-2">
+                        {dynamicMapVessels.slice(0, 3).map((c) => {
+                          const isTop = c.rank === 1;
+                          return (
+                            <div
+                              key={c.name + c.rank}
+                              onClick={() => {
+                                const matched = INCIDENT_DATA.vessels.find((v) => v.rank === c.rank) || INCIDENT_DATA.vessels[0];
+                                setSelectedCandidate(matched);
+                              }}
+                              className="p-2.5 rounded-xl bg-[#F8FBFE] hover:bg-[#EFF6FD] border border-[#E1EEF9] transition-all cursor-pointer"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5 font-semibold text-xs text-[#0B2545] font-body">
+                                  <span className={`w-4 h-4 rounded-full text-[10px] flex items-center justify-center font-mono ${
+                                    isTop ? "bg-rose-600 text-white font-bold" : "bg-slate-200 text-slate-700"
+                                  }`}>
+                                    {c.rank}
+                                  </span>
+                                  <span>{c.name}</span>
+                                </div>
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full border font-mono ${
+                                  c.score > 80
+                                    ? "text-rose-700 bg-rose-50 border-rose-200"
+                                    : c.score > 40
+                                    ? "text-amber-700 bg-amber-50 border-amber-200"
+                                    : "text-slate-700 bg-slate-100 border-slate-200"
+                                }`}>
+                                  {c.score}% Match
+                                </span>
+                              </div>
+
+                              <div className="text-[11px] text-slate-500 mt-1 font-body flex items-center gap-1.5">
+                                <span className="font-mono text-[10px] text-slate-600">IMO {c.imo}</span>
+                                <span className="text-slate-300">&bull;</span>
+                                <span>{c.type}</span>
+                                <span className="text-slate-300">&bull;</span>
+                                <span>{c.flag}</span>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-1 mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-slate-600 text-center font-body">
+                                <div>CPA: <span className="font-mono font-medium text-slate-800">{isTop ? "1.2 km" : "8.4 km"}</span></div>
+                                <div>Min SOG: <span className="font-mono font-medium text-amber-600">{c.speed} kts</span></div>
+                                <div>AIS Gap: <span className="font-mono font-medium text-rose-600">{isTop ? "94 min" : "0 min"}</span></div>
+                              </div>
+
+                              <div className="mt-2 pt-1.5 flex items-center justify-between border-t border-slate-100 font-body">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const matched = INCIDENT_DATA.vessels.find((v) => v.rank === c.rank) || INCIDENT_DATA.vessels[0];
+                                    setEvidenceModalCandidate(matched);
+                                  }}
+                                  className="text-[11px] font-semibold text-[#1E5FBF] hover:underline flex items-center gap-1 cursor-pointer btn-text"
+                                >
+                                  <span>Inspect 7D Evidence Radar</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </button>
+                                <span className="text-[9px] text-slate-400 font-mono">Forensic Verified</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 text-[10px] text-slate-400 text-center">
+                      Click vessel card to inspect spatiotemporal AIS trajectory correlation
+                    </div>
+                  </div>
+                </div>
+
+                {/* ================================================================= */}
+                {/* THIRD ROW: 4 PANELS (Origin, Impact, Activity, Response)         */}
+                {/* ================================================================= */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* PANEL G: Probable Origin Analysis */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between font-body">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <Target className="w-4 h-4 text-amber-500" />
+                          <h2 className="heading-section text-xs uppercase tracking-wider text-[#0B2545]">
+                            Probable Origin Analysis
+                          </h2>
+                        </div>
+                      </div>
+
+                      {/* Concentric Heatmap visual */}
+                      <div className="mt-3 flex items-center gap-3">
+                        <div className="w-16 h-16 rounded-2xl bg-[#0B1D35] border border-amber-300/40 flex items-center justify-center relative overflow-hidden shrink-0 shadow-inner">
+                          <div className="w-12 h-12 rounded-full border border-amber-500/50 flex items-center justify-center">
+                            <div className="w-8 h-8 rounded-full border border-rose-500/70 bg-rose-500/30 flex items-center justify-center animate-pulse">
+                              <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_white]" />
+                            </div>
+                          </div>
+                        </div>
+
+                        <p className="body-description text-sm text-slate-700 leading-relaxed font-body">
+                          Reverse Lagrangian particle dispersion modeling calculated with HYCOM ocean current vectors.
+                        </p>
+                      </div>
+
+                      {/* 2x2 Stat Grid */}
+                      <div className="grid grid-cols-2 gap-1.5 mt-3 text-[10px] font-mono">
+                        <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                          <span className="text-slate-400 block font-body text-[10px]">Origin Centroid</span>
+                          <span className="font-bold text-[#0B2545] font-mono text-xs">
+                            {currentCoords[0].toFixed(2)}°N, {currentCoords[1].toFixed(2)}°E
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                          <span className="text-slate-400 block font-body text-[10px]">Release Window</span>
+                          <span className="font-bold text-amber-600 font-mono text-xs">
+                            {originZone?.release_window_start ? "T - 18h to T - 30h" : "T - 18h to T - 30h"}
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] col-span-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-slate-400 font-body text-[10px]">Hindcast Convergence</span>
+                            <span className="font-bold text-emerald-700 font-mono text-xs">
+                              {originZone?.confidence_pct || 92.4} %
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1">
+                            <div
+                              className="h-full bg-gradient-to-r from-teal-500 to-emerald-600 rounded-full"
+                              style={{ width: `${originZone?.confidence_pct || 92.4}%` }}
                             />
                           </div>
-                          <div className="text-[9px] font-bold text-[#0B2545] truncate">
-                            {f.offset}
-                          </div>
-                          <div className="text-[7px] text-slate-400 font-mono truncate">
-                            {f.time}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Scrubber Range */}
-                  <div className="mt-3 px-1">
-                    <input
-                      type="range"
-                      min="0"
-                      max="6"
-                      value={selectedTimelineIndex}
-                      onChange={(e) => setSelectedTimelineIndex(Number(e.target.value))}
-                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1E5FBF]"
-                    />
-                    <div className="flex justify-between text-[9px] font-mono text-slate-400 mt-1">
-                      <span>-24h</span>
-                      <span className="text-rose-600 font-bold">Now ({activeTimelineFrame.areaKm2} km²)</span>
-                      <span>+48h</span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
 
-                <div className="mt-3 pt-2.5 border-t border-[#E1EEF9] flex items-center justify-between">
-                  <button
-                    onClick={() => setIsPlayingTimeline(!isPlayingTimeline)}
-                    className="px-3 py-1.5 rounded-xl bg-[#F0F7FD] hover:bg-[#E1EEF9] text-[#0B2545] font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer border border-[#E1EEF9]"
-                  >
-                    <span>{isPlayingTimeline ? "Pause" : "Play Simulation"}</span>
-                  </button>
-
-                  <button
-                    onClick={() => setShowCompareModelModal(true)}
-                    className="text-xs font-bold text-[#1E5FBF] hover:underline cursor-pointer flex items-center gap-1"
-                  >
-                    <span>Compare with Model</span>
-                    <span>&rarr;</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* PANEL F: Vessel Candidates */}
-              <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between font-body">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <Ship className="w-4 h-4 text-[#0B2545]" />
-                      <h2 className="heading-section text-xs uppercase tracking-wider text-[#0B2545]">
-                        Vessel Candidates (3)
-                      </h2>
-                    </div>
                     <button
-                      onClick={() => setShowAllCandidatesModal(true)}
-                      className="text-[11px] font-semibold text-[#1E5FBF] hover:underline cursor-pointer font-body"
+                      onClick={() => setShowOriginModal(true)}
+                      className="w-full mt-3 py-1.5 rounded-xl border border-[#E1EEF9] hover:bg-[#F8FBFE] text-slate-700 text-xs font-semibold font-body transition-all cursor-pointer text-center"
                     >
-                      View All &rarr;
+                      View Full Origin Hindcast &rarr;
                     </button>
                   </div>
 
-                  {/* 3 Candidate Rows */}
-                  <div className="mt-2.5 space-y-2">
-                    {[
-                      {
-                        rank: 1,
-                        name: "MT PACIFIC VOYAGER",
-                        score: 98.8,
-                        scoreColor: "text-rose-600 bg-rose-50 border-rose-200",
-                        imo: "9438200",
-                        type: "Crude Oil Tanker",
-                        flag: "Liberia",
-                        cpa: "27.46 km",
-                        minSog: "1.4 kts",
-                        aisGap: "94 min",
-                        vesselObj: INCIDENT_DATA.vessels[0],
-                      },
-                      {
-                        rank: 2,
-                        name: "CMA CGM ANTARES",
-                        score: 43.5,
-                        scoreColor: "text-amber-600 bg-amber-50 border-amber-200",
-                        imo: "9723411",
-                        type: "Container Vessel",
-                        flag: "France",
-                        cpa: "112.3 km",
-                        minSog: "12.6 kts",
-                        aisGap: "0 min",
-                        vesselObj: INCIDENT_DATA.vessels[1],
-                      },
-                      {
-                        rank: 3,
-                        name: "MV NORDIC TRADER",
-                        score: 31.2,
-                        scoreColor: "text-slate-700 bg-slate-100 border-slate-200",
-                        imo: "9315678",
-                        type: "Bulk Carrier",
-                        flag: "Panama",
-                        cpa: "148.6 km",
-                        minSog: "11.8 kts",
-                        aisGap: "12 min",
-                        vesselObj: INCIDENT_DATA.vessels[2],
-                      },
-                    ].map((c) => (
-                      <div
-                        key={c.rank}
-                        onClick={() => setSelectedCandidate(c.vesselObj)}
-                        className="p-2.5 rounded-xl bg-[#F8FBFE] hover:bg-[#EFF6FD] border border-[#E1EEF9] transition-all cursor-pointer"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 font-semibold text-xs text-[#0B2545] font-body">
-                            <span className="w-4 h-4 rounded-full bg-slate-200 text-slate-700 text-[10px] flex items-center justify-center font-mono data-mono-sm">
-                              {c.rank}
-                            </span>
-                            <span>{c.name}</span>
+                  {/* PANEL H: Potential Impact Assessment */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between font-body">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-rose-500" />
+                          <h2 className="heading-section text-xs uppercase tracking-wider text-[#0B2545]">
+                            Ecological &amp; Coastline Impact
+                          </h2>
+                        </div>
+                        <span className="text-[10px] font-bold text-rose-600 font-mono">
+                          {impactData?.risk_level || "HIGH RISK"}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 space-y-2 text-xs">
+                        <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between font-body">
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-3.5 h-3.5 text-slate-500" />
+                            <span className="text-slate-600">Est. Landfall ETA</span>
                           </div>
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border font-mono data-mono ${c.scoreColor}`}>
-                            {c.score}%
+                          <span className="font-bold font-mono text-amber-600">~ {currentEtaHours.toFixed(1)} hours</span>
+                        </div>
+
+                        <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
+                            <span className="text-slate-600">Vulnerable Sector</span>
+                          </div>
+                          <span className="font-bold text-rose-600 truncate max-w-[150px]">
+                            {impactData?.coastline_region?.split(",")[0] || "Alibaug & Raigad (38 km)"}
                           </span>
                         </div>
 
-                        <div className="text-[11px] text-slate-500 mt-1 font-body">
-                          <span className="font-mono text-[10px] text-slate-600">IMO {c.imo}</span>
-                          <span className="mx-1 text-slate-300">&bull;</span>
-                          <span>{c.type}</span>
-                          <span className="mx-1 text-slate-300">&bull;</span>
-                          <span>{c.flag}</span>
+                        <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Shield className="w-3.5 h-3.5 text-[#0EA5B7]" />
+                            <span className="text-slate-600">MPA Sanctuary Overlap</span>
+                          </div>
+                          <span className="font-bold font-mono text-[#0EA5B7]">
+                            {impactData?.mpa_overlap_pct ? `${impactData.mpa_overlap_pct}% (${impactData.mpa_overlap_km2} km²)` : "12.3% (25.8 km²)"}
+                          </span>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-1 mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-slate-600 text-center font-body">
-                          <div>CPA: <span className="font-mono font-medium text-slate-800">{c.cpa}</span></div>
-                          <div>Min SOG: <span className="font-mono font-medium text-amber-600">{c.minSog}</span></div>
-                          <div>AIS Gap: <span className="font-mono font-medium text-rose-600">{c.aisGap}</span></div>
-                        </div>
-
-                        <div className="mt-2 pt-1.5 flex items-center justify-between border-t border-slate-100 font-body">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEvidenceModalCandidate(c.vesselObj);
-                            }}
-                            className="text-[11px] font-semibold text-[#1E5FBF] hover:underline flex items-center gap-1 cursor-pointer btn-text"
-                          >
-                            <span>View 7D Evidence Graph</span>
-                            <ExternalLink className="w-3 h-3" />
-                          </button>
-                          <span className="text-[9px] text-slate-400 font-mono">Stage 11</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-2 text-[10px] text-slate-400 text-center">
-                  Click any vessel to inspect forensic trajectory matching
-                </div>
-              </div>
-            </div>
-
-            {/* ================================================================= */}
-            {/* THIRD ROW: 4 PANELS (Origin, Impact, Activity, Response)         */}
-            {/* ================================================================= */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* PANEL G: Probable Origin Analysis */}
-              <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between font-body">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <Target className="w-4 h-4 text-amber-500" />
-                      <h2 className="heading-section text-xs uppercase tracking-wider text-[#0B2545]">
-                        Probable Origin Analysis
-                      </h2>
-                    </div>
-                  </div>
-
-                  {/* Concentric Heatmap visual */}
-                  <div className="mt-3 flex items-center gap-3">
-                    <div className="w-16 h-16 rounded-2xl bg-[#0B1D35] border border-amber-300/40 flex items-center justify-center relative overflow-hidden shrink-0 shadow-inner">
-                      <div className="w-12 h-12 rounded-full border border-amber-500/50 flex items-center justify-center">
-                        <div className="w-8 h-8 rounded-full border border-rose-500/70 bg-rose-500/30 flex items-center justify-center animate-pulse">
-                          <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_white]" />
+                        <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Fish className="w-3.5 h-3.5 text-emerald-600" />
+                            <span className="text-slate-600">Fishing Zones</span>
+                          </div>
+                          <span className="font-bold font-mono text-emerald-600">
+                            {impactData?.fishing_zone_overlap_pct ? `${impactData.fishing_zone_overlap_pct}% (${impactData.fishing_zone_overlap_km2} km²)` : "8.7% (18.1 km²)"}
+                          </span>
                         </div>
                       </div>
                     </div>
 
-                    <p className="body-description text-sm text-slate-700 leading-relaxed font-body">
-                      Most probable release location based on reverse Lagrangian particle tracking.
-                    </p>
-                  </div>
-
-                  {/* 2x2 Stat Grid */}
-                  <div className="grid grid-cols-2 gap-1.5 mt-3 text-[10px] font-mono">
-                    <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                      <span className="text-slate-400 block font-body text-[10px]">Coordinates</span>
-                      <span className="font-bold text-[#0B2545] font-mono text-xs">18.78°N, 72.51°E</span>
-                    </div>
-                    <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                      <span className="text-slate-400 block font-body text-[10px]">Release Window</span>
-                      <span className="font-bold text-amber-600 font-mono text-xs">T - 18h to T - 30h</span>
-                    </div>
-                    <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] col-span-2">
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-400 font-body text-[10px]">Attribution Confidence</span>
-                        <span className="font-bold text-emerald-700 font-mono text-xs">81 %</span>
-                      </div>
-                      <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1">
-                        <div className="h-full w-[81%] bg-gradient-to-r from-teal-500 to-emerald-600 rounded-full" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => setShowOriginModal(true)}
-                  className="w-full mt-3 py-1.5 rounded-xl border border-[#E1EEF9] hover:bg-[#F8FBFE] text-slate-700 text-xs font-semibold font-body transition-all cursor-pointer text-center"
-                >
-                  View Full Origin Analysis &rarr;
-                </button>
-              </div>
-
-              {/* PANEL H: Potential Impact Assessment */}
-              <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between font-body">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <Shield className="w-4 h-4 text-rose-500" />
-                      <h2 className="heading-section text-xs uppercase tracking-wider text-[#0B2545]">
-                        Potential Impact Assessment
-                      </h2>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 space-y-2 text-xs">
-                    <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between font-body">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-3.5 h-3.5 text-slate-500" />
-                        <span className="text-slate-600">Est. Time to Coast</span>
-                      </div>
-                      <span className="font-bold font-mono text-amber-600">~ 16.4 hours</span>
-                    </div>
-
-                    <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
-                        <span className="text-slate-600">Affected Coastline</span>
-                      </div>
-                      <span className="font-bold text-rose-600">Gujarat (38 km)</span>
-                    </div>
-
-                    <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-3.5 h-3.5 text-[#0EA5B7]" />
-                        <span className="text-slate-600">Marine Protected</span>
-                      </div>
-                      <span className="font-bold font-mono text-[#0EA5B7]">12.3% (25.8 km²)</span>
-                    </div>
-
-                    <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Fish className="w-3.5 h-3.5 text-emerald-600" />
-                        <span className="text-slate-600">Fishing Zones</span>
-                      </div>
-                      <span className="font-bold font-mono text-emerald-600">8.7% (18.1 km²)</span>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => triggerToast("Coastline, MPA buffer and artisanal fishing corridors highlighted on tactical map.")}
-                  className="w-full mt-3 py-1.5 rounded-xl border border-[#E1EEF9] hover:bg-[#F8FBFE] text-[#1E5FBF] text-xs font-bold transition-all cursor-pointer text-center"
-                >
-                  View Impact on Map &rarr;
-                </button>
-              </div>
-
-              {/* PANEL I: Recent Activity */}
-              <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <Activity className="w-4 h-4 text-[#1E5FBF]" />
-                      <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                        Recent Activity
-                      </h2>
-                    </div>
                     <button
-                      onClick={() => setShowAllActivityModal(true)}
-                      className="text-[11px] font-semibold text-[#1E5FBF] hover:underline cursor-pointer"
+                      onClick={() => triggerToast("Coastline, MPA buffer and artisanal fishing corridors highlighted on tactical map.")}
+                      className="w-full mt-3 py-1.5 rounded-xl border border-[#E1EEF9] hover:bg-[#F8FBFE] text-[#1E5FBF] text-xs font-bold transition-all cursor-pointer text-center"
                     >
-                      View All
+                      Highlight Impact Zones on Map &rarr;
                     </button>
                   </div>
 
-                  {/* Vertical Timeline */}
-                  <div className="mt-3 space-y-2 text-xs">
-                    {INCIDENT_DATA.activityLog.map((act) => (
-                      <div key={act.id} className="flex items-start gap-2">
-                        {act.status === "completed" ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                        ) : act.status === "in-progress" ? (
-                          <span className="w-3 h-3 rounded-full bg-amber-500 animate-ping shrink-0 mt-0.5" />
+                  {/* PANEL I: Recent Activity Audit Log */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <Activity className="w-4 h-4 text-[#1E5FBF]" />
+                          <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                            Activity &amp; Evidence Audit
+                          </h2>
+                        </div>
+                        <button
+                          onClick={() => setShowAllActivityModal(true)}
+                          className="text-[11px] font-semibold text-[#1E5FBF] hover:underline cursor-pointer"
+                        >
+                          View All
+                        </button>
+                      </div>
+
+                      {/* Vertical Timeline */}
+                      <div className="mt-3 space-y-2 text-xs font-body">
+                        {incidentDetail?.activity_logs?.length ? (
+                          incidentDetail.activity_logs.slice(0, 5).map((act: any) => (
+                            <div key={act.id} className="flex items-start gap-2">
+                              {act.status === "done" || act.status === "completed" ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                              ) : (
+                                <Circle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5 animate-pulse" />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[11px] text-slate-700 leading-tight truncate">
+                                  {act.event_text}
+                                </div>
+                                <div className="text-[9px] text-slate-400 font-mono mt-0.5">
+                                  {act.occurred_at ? new Date(act.occurred_at).toUTCString().slice(17, 22) + " UTC" : "17:05 UTC"}
+                                </div>
+                              </div>
+                            </div>
+                          ))
                         ) : (
-                          <Circle className="w-3.5 h-3.5 text-slate-300 shrink-0 mt-0.5" />
+                          INCIDENT_DATA.activityLog.slice(0, 5).map((act) => (
+                            <div key={act.id} className="flex items-start gap-2">
+                              {act.status === "completed" ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                              ) : (
+                                <Circle className="w-3.5 h-3.5 text-slate-300 shrink-0 mt-0.5" />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[11px] text-slate-700 leading-tight truncate">
+                                  {act.text}
+                                </div>
+                                <div className="text-[9px] text-slate-400 font-mono mt-0.5">{act.time}</div>
+                              </div>
+                            </div>
+                          ))
                         )}
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[11px] text-slate-700 leading-tight truncate">
-                            {act.text}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 pt-2 text-[10px] text-slate-400 font-mono text-center border-t border-[#E1EEF9]">
+                      Telemetry Node: INCOIS / CG West MRCC
+                    </div>
+                  </div>
+
+                  {/* PANEL J: Operational Response Optimizer */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] relative">
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-[#0B2545]" />
+                          <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                            Response Optimizer
+                          </h2>
+                        </div>
+
+                        {/* Status Dropdown */}
+                        <button
+                          onClick={() => setShowResponseStatusDropdown(!showResponseStatusDropdown)}
+                          className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>{responseStatus}</span>
+                          <ChevronDown className="w-3 h-3" />
+                        </button>
+
+                        {showResponseStatusDropdown && (
+                          <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-[#E1EEF9] rounded-xl shadow-xl p-1 z-30 text-xs">
+                            {(["Planning", "Active", "Completed"] as const).map((st) => (
+                              <button
+                                key={st}
+                                onClick={() => {
+                                  setResponseStatus(st);
+                                  setShowResponseStatusDropdown(false);
+                                  triggerToast(`Response status updated to: ${st}`);
+                                }}
+                                className={`w-full text-left px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
+                                  responseStatus === st ? "bg-[#1E5FBF] text-white" : "hover:bg-slate-100 text-slate-700"
+                                }`}
+                              >
+                                {st}
+                              </button>
+                            ))}
                           </div>
-                          <div className="text-[9px] text-slate-400 font-mono mt-0.5">{act.time}</div>
+                        )}
+                      </div>
+
+                      {/* Priority Zone Selector */}
+                      <div className="mt-2.5">
+                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-body">
+                          Target Priority Zone
+                        </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          {RESPONSE_PRIORITY_ZONES.map((z) => {
+                            const isSel = selectedPriorityZone.id === z.id;
+                            return (
+                              <button
+                                key={z.id}
+                                onClick={() => setSelectedPriorityZone(z)}
+                                className={`p-1.5 rounded-lg border text-left transition-all text-[10px] font-semibold flex items-center gap-1.5 ${
+                                  isSel
+                                    ? "bg-sky-50 border-[#1E5FBF] text-[#0B2545] shadow-2xs"
+                                    : "bg-[#F8FBFE] border-[#E1EEF9] text-slate-600 hover:bg-slate-50"
+                                }`}
+                              >
+                                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: z.color }}></span>
+                                <span className="truncate font-body">Zone {z.priority}: {z.name.split(":")[1]?.trim() || z.name}</span>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
-                    ))}
+
+                      {/* Real Coast Guard Assets Table */}
+                      <div className="mt-2.5 pt-2 border-t border-slate-100 font-body">
+                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                          <span>Nearby Coast Guard Assets</span>
+                          <span className="text-emerald-600 font-mono">{dynamicMapAssets.length} Operational</span>
+                        </div>
+
+                        <div className="space-y-1 text-xs">
+                          {dynamicMapAssets.slice(0, 4).map((asset) => {
+                            const isDeployed = deployedAssets[String(asset.id)];
+                            return (
+                              <div
+                                key={asset.id}
+                                className="p-1.5 rounded-lg bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between text-[10px]"
+                              >
+                                <div>
+                                  <span className="font-bold text-[#0B2545]">{asset.name}</span>
+                                  <span className="text-slate-400 ml-1 font-mono">
+                                    ({asset.distance_km ? `${asset.distance_km.toFixed(1)} km` : "On Station"})
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    const next = !isDeployed;
+                                    setDeployedAssets({ ...deployedAssets, [String(asset.id)]: next });
+                                    triggerToast(`${asset.name}: ${next ? "Dispatch Orders Transmitted" : "Recalled"}`);
+                                  }}
+                                  className={`px-2 py-0.5 rounded-md font-bold transition-all cursor-pointer ${
+                                    isDeployed
+                                      ? "bg-emerald-600 text-white"
+                                      : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-100"
+                                  }`}
+                                >
+                                  {isDeployed ? "Deployed" : "Deploy"}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Recommendation Summary */}
+                      <div className="mt-3 p-2.5 rounded-xl bg-amber-50/80 border border-amber-200 text-xs text-amber-900 leading-relaxed font-body">
+                        <span className="font-bold">Model Directive: </span>
+                        Deploy 800m shoreline containment boom to {selectedPriorityZone.name.split(":")[0]} within 2h to prevent mangrove fouling.
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setShowResponsePlanModal(true)}
+                      className="w-full mt-3 py-2.5 rounded-xl bg-gradient-to-r from-[#0B2545] to-[#1E5FBF] hover:from-[#123A66] hover:to-[#174EA6] text-white text-xs font-semibold font-body transition-all cursor-pointer text-center shadow-sm flex items-center justify-center gap-1.5"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Execute Tactical Response Plan</span>
+                    </button>
                   </div>
                 </div>
+              </>
+            )}
 
-                <div className="mt-3 pt-2 text-[10px] text-slate-400 font-mono text-center border-t border-[#E1EEF9]">
-                  Live Telemetry Logging: INCOIS / Coast Guard Node
+            {/* =================================================================== */}
+            {/* WORKSPACE TAB: RECOVERY MONITORING (Stage 21)                       */}
+            {/* =================================================================== */}
+            {activeIncidentTab === "recovery" && (
+              <div className="space-y-5 animate-fadeIn">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                  <div className="lg:col-span-6 p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] flex flex-col justify-between font-body">
+                    <div>
+                      <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-emerald-600" />
+                          <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                            Remediation &amp; Containment Progress
+                          </h2>
+                        </div>
+                        <span className="text-xs font-mono font-bold text-emerald-600">
+                          {RECOVERY_MONITORING_DATA.overallRemediationPct}% Remediated
+                        </span>
+                      </div>
+
+                      <div className="mt-4">
+                        <div className="flex justify-between text-xs text-slate-600 mb-1">
+                          <span>Surface Hydrocarbon Recovery</span>
+                          <span className="font-mono font-bold">{RECOVERY_MONITORING_DATA.containmentEfficiency}% Efficiency</span>
+                        </div>
+                        <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                          <div
+                            className="h-full bg-gradient-to-r from-teal-500 to-emerald-600 rounded-full"
+                            style={{ width: `${RECOVERY_MONITORING_DATA.overallRemediationPct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-5 space-y-2.5 text-xs">
+                        {RECOVERY_MONITORING_DATA.milestones.map((m) => (
+                          <div key={m.id} className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              {m.completed ? (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              ) : (
+                                <Circle className="w-4 h-4 text-slate-300 shrink-0" />
+                              )}
+                              <span className={m.completed ? "font-semibold text-slate-800" : "text-slate-500"}>
+                                {m.label}
+                              </span>
+                            </div>
+                            <span className="font-mono text-[10px] text-slate-400">{m.date}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="lg:col-span-6 p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] flex flex-col justify-between font-body">
+                    <div>
+                      <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <Activity className="w-4 h-4 text-[#1E5FBF]" />
+                          <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                            Water Quality &amp; Hydrocarbon Concentration Trend
+                          </h2>
+                        </div>
+                        <span className="text-xs font-mono text-slate-500">4 Coastal Buoy Stations</span>
+                      </div>
+
+                      <div className="h-64 mt-4">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={RECOVERY_MONITORING_DATA.waterQualityHistory}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                            <XAxis dataKey="time" tick={{ fontSize: 10, fill: "#64748B" }} />
+                            <YAxis tick={{ fontSize: 10, fill: "#64748B" }} />
+                            <RechartsTooltip />
+                            <Line type="monotone" dataKey="hydrocarbonsPpm" name="Hydrocarbons (ppm)" stroke="#EF4444" strokeWidth={2.5} />
+                            <Line type="monotone" dataKey="wqiScore" name="WQI Health Score" stroke="#10B981" strokeWidth={2} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
+            )}
 
-              {/* PANEL J: Response Actions & Optimizer (Stage 17) */}
-              <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] hover:shadow-[0_6px_24px_rgba(30,95,191,0.12)] transition-all flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] relative">
-                    <div className="flex items-center gap-2">
-                      <Shield className="w-4 h-4 text-[#0B2545]" />
-                      <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                        Response Optimizer
-                      </h2>
-                      <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-sky-100 text-[#1E5FBF] font-bold">
-                        Stage 17
+            {/* =================================================================== */}
+            {/* WORKSPACE TAB: MARINE DIGITAL TWIN SIMULATOR (Stage 20)             */}
+            {/* =================================================================== */}
+            {activeIncidentTab === "digitaltwin" && (
+              <div className="space-y-5 animate-fadeIn font-body">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                  {/* Left Controls & Live Physics Engine */}
+                  <div className="lg:col-span-4 p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <Compass className="w-4 h-4 text-[#1E5FBF]" />
+                        <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Physics &amp; Wind Drag Tuning
+                        </h2>
+                      </div>
+                      <span className="text-[10px] font-mono bg-sky-100 text-[#1E5FBF] px-2 py-0.5 rounded-full font-bold">
+                        OpenDrift v1.9
                       </span>
                     </div>
 
-                    {/* Status Pill Dropdown */}
-                    <button
-                      onClick={() => setShowResponseStatusDropdown(!showResponseStatusDropdown)}
-                      className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>{responseStatus}</span>
-                      <ChevronDown className="w-3 h-3" />
-                    </button>
-
-                    {showResponseStatusDropdown && (
-                      <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-[#E1EEF9] rounded-xl shadow-xl p-1 z-30 text-xs">
-                        {(["Planning", "Active", "Completed"] as const).map((st) => (
-                          <button
-                            key={st}
-                            onClick={() => {
-                              setResponseStatus(st);
-                              setShowResponseStatusDropdown(false);
-                              triggerToast(`Response status updated to: ${st}`);
-                            }}
-                            className={`w-full text-left px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
-                              responseStatus === st ? "bg-[#1E5FBF] text-white" : "hover:bg-slate-100 text-slate-700"
-                            }`}
-                          >
-                            {st}
-                          </button>
-                        ))}
+                    {/* Wind Velocity Slider */}
+                    <div>
+                      <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+                        <span className="flex items-center gap-1.5">
+                          <Wind className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                          <span>Wind Velocity</span>
+                        </span>
+                        <span className="font-mono font-bold text-[#1E5FBF]">{simWindSpeed} m/s</span>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Priority Zone Selector */}
-                  <div className="mt-2.5">
-                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                      Target Priority Zone
-                    </div>
-                    <div className="grid grid-cols-2 gap-1">
-                      {RESPONSE_PRIORITY_ZONES.map((z) => {
-                        const isSel = selectedPriorityZone.id === z.id;
-                        return (
-                          <button
-                            key={z.id}
-                            onClick={() => setSelectedPriorityZone(z)}
-                            className={`p-1.5 rounded-lg border text-left transition-all text-[10px] font-semibold flex items-center gap-1.5 ${
-                              isSel
-                                ? "bg-sky-50 border-[#1E5FBF] text-[#0B2545] shadow-2xs"
-                                : "bg-[#F8FBFE] border-[#E1EEF9] text-slate-600 hover:bg-slate-50"
-                            }`}
-                          >
-                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: z.color }}></span>
-                            <span className="truncate">Zone {z.priority}: {z.name.split(":")[1]?.trim() || z.name}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Resource Allocation Mini-Table */}
-                  <div className="mt-2.5 pt-2 border-t border-slate-100">
-                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                      <span>Available Coast Guard Assets</span>
-                      <span className="text-emerald-600 font-mono">4 Ready</span>
-                    </div>
-
-                    <div className="space-y-1 text-xs">
-                      {[
-                        { id: "cg-1", name: "ICGS Vikram", type: "Offshore Patrol Vessel", dist: "12 km", eta: "45m" },
-                        { id: "cg-2", name: "ICGS Samarth", type: "Fast Patrol Vessel", dist: "28 km", eta: "1h 20m" },
-                        { id: "cg-3", name: "ICGS C-457", type: "Interceptor Boat", dist: "36 km", eta: "50m" },
-                        { id: "cg-4", name: "ICGS Dornier", type: "Maritime Aircraft", dist: "Airborne", eta: "15m" },
-                      ].map((asset) => {
-                        const isDeployed = deployedAssets[asset.id];
-                        return (
-                          <div
-                            key={asset.id}
-                            className="p-1.5 rounded-lg bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between text-[10px]"
-                          >
-                            <div>
-                              <span className="font-bold text-[#0B2545]">{asset.name}</span>
-                              <span className="text-slate-400 ml-1">({asset.dist} &bull; {asset.eta})</span>
-                            </div>
-                            <button
-                              onClick={() => {
-                                const next = !isDeployed;
-                                setDeployedAssets({ ...deployedAssets, [asset.id]: next });
-                                triggerToast(`${asset.name}: ${next ? "Orders Dispatched" : "Recalled"}`);
-                              }}
-                              className={`px-2 py-0.5 rounded-md font-bold transition-all cursor-pointer ${
-                                isDeployed
-                                  ? "bg-emerald-600 text-white"
-                                  : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-100"
-                              }`}
-                            >
-                              {isDeployed ? "Deployed" : "Deploy"}
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Recommended Deployment Summary Card */}
-                  <div className="mt-3 p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 text-xs sm:text-[13px] text-amber-900 leading-relaxed font-body">
-                    <span className="font-bold">Recommended Plan: </span>
-                    Deploy <span className="font-semibold">ICGS Vikram</span> with 800m boom to {selectedPriorityZone.name.split(":")[0]} within 2h to prevent mangrove contamination.
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => setShowResponsePlanModal(true)}
-                  className="w-full mt-3 py-2.5 rounded-xl bg-gradient-to-r from-[#0B2545] to-[#1E5FBF] hover:from-[#123A66] hover:to-[#174EA6] text-white text-xs font-semibold font-body transition-all cursor-pointer text-center shadow-sm flex items-center justify-center gap-1.5"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Execute Tactical Response Plan</span>
-                </button>
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* =================================================================== */}
-        {/* WORKSPACE TAB: RECOVERY MONITORING (Stage 21)                       */}
-        {/* =================================================================== */}
-        {activeIncidentTab === "recovery" && (
-          <div className="space-y-5 animate-fadeIn">
-            {/* Top Row: Cleanup Progress & Timeline Forecast */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-              {/* Cleanup Progress Panel (6 cols) */}
-              <div className="lg:col-span-6 p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-emerald-600" />
-                      <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                        Cleanup &amp; Containment Progress
-                      </h2>
-                    </div>
-                    <span className="text-xs font-mono font-bold text-emerald-600">
-                      {RECOVERY_MONITORING_DATA.overallRemediationPct}% Remediated
-                    </span>
-                  </div>
-
-                  {/* Big Progress Bar */}
-                  <div className="mt-4">
-                    <div className="w-full bg-slate-100 rounded-full h-3.5 overflow-hidden p-0.5 border border-slate-200">
-                      <div
-                        className="bg-gradient-to-r from-[#1E5FBF] to-emerald-500 h-full rounded-full transition-all duration-500"
-                        style={{ width: `${RECOVERY_MONITORING_DATA.overallRemediationPct}%` }}
-                      ></div>
-                    </div>
-                    <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono mt-1">
-                      <span>0% Uncontrolled</span>
-                      <span>Target: 100% Baseline Environmental Recovery</span>
-                    </div>
-                  </div>
-
-                  {/* Milestone Checklist */}
-                  <div className="mt-5 space-y-2 text-xs">
-                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                      Operational Remediation Milestones
-                    </div>
-                    {RECOVERY_MONITORING_DATA.milestones.map((m) => (
-                      <div
-                        key={m.id}
-                        className={`p-2.5 rounded-xl border flex items-center justify-between ${
-                          m.completed
-                            ? "bg-emerald-50/50 border-emerald-200 text-slate-800"
-                            : "bg-[#F8FBFE] border-[#E1EEF9] text-slate-500"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          {m.completed ? (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                          ) : (
-                            <Circle className="w-4 h-4 text-slate-300 shrink-0" />
-                          )}
-                          <span className={m.completed ? "font-semibold" : ""}>{m.label}</span>
-                        </div>
-                        <span className="text-[10px] font-mono text-slate-400">{m.date}</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="25"
+                        step="0.5"
+                        value={simWindSpeed}
+                        onChange={(e) => setSimWindSpeed(Number(e.target.value))}
+                        className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1E5FBF]"
+                      />
+                      <div className="flex justify-between text-[9px] font-mono text-slate-400 mt-0.5">
+                        <span>0 m/s (Calm)</span>
+                        <span>12 m/s (Gale)</span>
+                        <span>25 m/s (Storm)</span>
                       </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-4 pt-3 border-t border-[#E1EEF9] text-[10px] text-slate-400 font-mono text-center">
-                  Containment Efficiency: {RECOVERY_MONITORING_DATA.containmentEfficiency}% &bull; Estimated Full Recovery: {RECOVERY_MONITORING_DATA.estimatedFullRecovery}
-                </div>
-              </div>
-
-              {/* Water Quality Time-Series Chart (6 cols) */}
-              <div className="lg:col-span-6 p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
-                    <div className="flex items-center gap-2">
-                      <Activity className="w-4 h-4 text-[#1E5FBF]" />
-                      <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                        Water Quality Index (WQI) &amp; Hydrocarbons Over Time
-                      </h2>
                     </div>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-50 text-[#1E5FBF] border border-sky-200">
-                      4 Sample Stations
-                    </span>
-                  </div>
 
-                  {/* Recharts Line Chart */}
-                  <div className="h-56 w-full mt-4">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={RECOVERY_MONITORING_DATA.waterQualityHistory}
-                        margin={{ top: 10, right: 20, left: -10, bottom: 0 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#E1EEF9" />
-                        <XAxis dataKey="time" tick={{ fontSize: 10 }} />
-                        <YAxis yAxisId="left" domain={[0, 30]} unit=" ppm" tick={{ fontSize: 10 }} />
-                        <YAxis yAxisId="right" orientation="right" domain={[0, 100]} unit="" tick={{ fontSize: 10 }} />
-                        <RechartsTooltip />
-                        <Line
-                          yAxisId="left"
-                          type="monotone"
-                          dataKey="hydrocarbonsPpm"
-                          name="Dissolved Hydrocarbons (ppm)"
-                          stroke="#EF4444"
-                          strokeWidth={2.5}
-                          dot={{ r: 3 }}
-                        />
-                        <Line
-                          yAxisId="right"
-                          type="monotone"
-                          dataKey="wqiScore"
-                          name="Water Quality Index (0-100)"
-                          stroke="#10B981"
-                          strokeWidth={2}
-                          strokeDasharray="3 3"
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
+                    {/* Wind Direction Slider */}
+                    <div>
+                      <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+                        <span className="flex items-center gap-1.5">
+                          <Compass className="w-3.5 h-3.5 text-amber-500" />
+                          <span>Wind Direction</span>
+                        </span>
+                        <span className="font-mono font-bold text-amber-600">{simWindDir}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="360"
+                        step="5"
+                        value={simWindDir}
+                        onChange={(e) => setSimWindDir(Number(e.target.value))}
+                        className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                      />
+                      <div className="flex justify-between text-[9px] font-mono text-slate-400 mt-0.5">
+                        <span>0° (N)</span>
+                        <span>90° (E)</span>
+                        <span>180° (S)</span>
+                        <span>270° (W)</span>
+                        <span>360°</span>
+                      </div>
+                    </div>
 
-                  {/* Sample Stations Grid */}
-                  <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-[#E1EEF9] text-xs">
-                    {RECOVERY_MONITORING_DATA.waterQualityStations.map((stn) => (
-                      <div key={stn.id} className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-[#0B2545] text-[11px]">{stn.name}</span>
-                          <span
-                            className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                              stn.status === "Good"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : stn.status === "Moderate"
-                                ? "bg-amber-100 text-amber-800"
-                                : "bg-rose-100 text-rose-800"
-                            }`}
-                          >
-                            {stn.status} ({stn.currentWqi})
+                    {/* Current Speed Slider */}
+                    <div>
+                      <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+                        <span className="flex items-center gap-1.5">
+                          <Waves className="w-3.5 h-3.5 text-[#0EA5B7]" />
+                          <span>Current Speed</span>
+                        </span>
+                        <span className="font-mono font-bold text-[#0EA5B7]">{simCurrentSpeed} m/s</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="3"
+                        step="0.05"
+                        value={simCurrentSpeed}
+                        onChange={(e) => setSimCurrentSpeed(Number(e.target.value))}
+                        className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#0EA5B7]"
+                      />
+                      <div className="flex justify-between text-[9px] font-mono text-slate-400 mt-0.5">
+                        <span>0 m/s (Slack)</span>
+                        <span>1.5 m/s</span>
+                        <span>3.0 m/s (Strong)</span>
+                      </div>
+                    </div>
+
+                    {/* Real-time Dynamic Physics Telemetry Grid */}
+                    <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2 text-xs">
+                      <div className="font-bold text-[#0B2545] text-[11px] uppercase tracking-wider flex items-center justify-between pb-1.5 border-b border-slate-100">
+                        <span>Real-Time Hydrodynamic Drift</span>
+                        <span className="text-emerald-700 font-mono text-[10px] animate-pulse">● Active</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div>
+                          <span className="text-slate-400 text-[10px] block">Net Drift Velocity</span>
+                          <span className="font-mono font-bold text-[#0B2545]">
+                            {digitalTwinSimulation.netSpeedKts.toFixed(1)} kts
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-mono block">
+                            ({(digitalTwinSimulation.netSpeedKts * 1.852).toFixed(1)} km/h)
                           </span>
                         </div>
-                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                          HC: {stn.hydrocarbonsPpm} ppm &bull; [18.66°N, 72.84°E]
+                        <div>
+                          <span className="text-slate-400 text-[10px] block">Dispersion Heading</span>
+                          <span className="font-mono font-bold text-amber-600">
+                            {Math.round(digitalTwinSimulation.netHeadingDeg)}°
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 text-[10px] block">24h Projected Area</span>
+                          <span className="font-mono font-bold text-rose-600">
+                            {(digitalTwinSimulation.dynamicArea * 1.35).toFixed(1)} km²
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 text-[10px] block">Projected Landfall</span>
+                          <span className="font-mono font-bold text-[#1E5FBF]">
+                            ~ {digitalTwinSimulation.landfallEtaHours.toFixed(1)} h
+                          </span>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
 
-            {/* Bottom Row: Ecological Indices & Recovery Timeline Forecast */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-              {/* Ecological Indicators (6 cols) */}
-              <div className="lg:col-span-6 p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)]">
-                <div className="flex items-center gap-2 pb-3 border-b border-[#E1EEF9] mb-3">
-                  <Fish className="w-4 h-4 text-sky-600" />
-                  <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                    Ecological &amp; Marine Habitat Vulnerability Assessment
-                  </h2>
-                </div>
+                      <div className="pt-1.5 border-t border-slate-100 text-[10px] text-slate-600 flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                        <span className="truncate font-semibold">{digitalTwinSimulation.targetSector}</span>
+                      </div>
+                    </div>
 
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  {RECOVERY_MONITORING_DATA.ecologicalMetrics.map((eco, i) => (
-                    <div key={i} className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                      <div className="text-[10px] text-slate-500 font-semibold">{eco.label}</div>
-                      <div className="text-base font-bold text-[#0B2545] mt-1">{eco.value}</div>
-                      <div
-                        className={`text-[10px] font-semibold mt-0.5 ${
-                          eco.status === "good" ? "text-emerald-600" : "text-amber-600"
-                        }`}
+                    {/* Action Buttons */}
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        onClick={() => {
+                          setSimWindSpeed(5.1);
+                          setSimWindDir(289);
+                          setSimCurrentSpeed(0.67);
+                          triggerToast("Reset parameters to ambient satellite/buoy telemetry.");
+                        }}
+                        className="flex-1 py-2 rounded-xl border border-[#E1EEF9] hover:bg-[#F8FBFE] text-slate-700 text-xs font-semibold cursor-pointer transition-colors"
                       >
-                        {eco.change}
+                        Reset Defaults
+                      </button>
+                      <button
+                        onClick={() => triggerToast(`Digital Twin: Dynamic hydrodynamic dispersion simulated for ${digitalTwinSimulation.targetSector}`)}
+                        className="flex-1 py-2 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white text-xs font-bold shadow-sm cursor-pointer transition-all"
+                      >
+                        Run Digital Twin Prediction
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Right Dynamic Map Canvas */}
+                  <div className="lg:col-span-8 p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
+                        <div className="flex items-center gap-2">
+                          <MapPin className="w-4 h-4 text-rose-600" />
+                          <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                            Interactive Hydrodynamic Dispersion Canvas (Live Simulation)
+                          </h2>
+                        </div>
+                        <div className="flex items-center gap-2 font-mono text-[10px] text-slate-500">
+                          <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold">
+                            Live Morphing Active
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Simulation Status Overlay Banner */}
+                      <div className="mt-3 p-2.5 rounded-xl bg-[#F0F7FD] border border-[#DCEEFC] flex items-center justify-between text-xs font-mono text-[#0B2545]">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
+                          <span>
+                            Wind: <strong className="text-[#1E5FBF]">{simWindSpeed} m/s @ {simWindDir}°</strong> &bull; Current: <strong className="text-[#0EA5B7]">{simCurrentSpeed} m/s</strong>
+                          </span>
+                        </div>
+                        <div className="text-slate-600">
+                          Dispersal Vector: <strong className="text-amber-600">{Math.round(digitalTwinSimulation.netHeadingDeg)}°</strong> &bull; ETA: <strong className="text-rose-600">~ {digitalTwinSimulation.landfallEtaHours.toFixed(1)}h</strong>
+                        </div>
+                      </div>
+
+                      {/* Map with dynamic polygon & forecast trajectory */}
+                      <div className="mt-3">
+                        <IncidentMiniMap
+                          center={currentCoords}
+                          originCoord={currentCoords}
+                          spillPolygon={digitalTwinSimulation.slickVerts}
+                          forecastTrack={digitalTwinSimulation.forecastPath}
+                          vessels={dynamicMapVessels}
+                          cgAssets={dynamicMapAssets}
+                          isSimulated={true}
+                        />
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
 
-              {/* Recovery Timeline Forecast (6 cols) */}
-              <div className="lg:col-span-6 p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)]">
-                <div className="flex items-center gap-2 pb-3 border-b border-[#E1EEF9] mb-3">
-                  <Clock className="w-4 h-4 text-amber-500" />
-                  <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                    Recovery Timeline Prediction Model
-                  </h2>
-                </div>
-
-                <div className="space-y-3 text-xs">
-                  {RECOVERY_MONITORING_DATA.recoveryTimeline.map((ph, idx) => (
-                    <div key={idx} className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-[#0B2545]">{ph.phase}</span>
-                        <span className="font-mono text-slate-500 text-[11px]">{ph.estimatedDate}</span>
-                      </div>
-                      <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                        <div
-                          className="bg-[#1E5FBF] h-full rounded-full"
-                          style={{ width: `${(ph.currentPct / ph.targetPct) * 100}%` }}
-                        ></div>
-                      </div>
-                      <div className="flex justify-between text-[9px] text-slate-400 font-mono">
-                        <span>Current: {ph.currentPct}%</span>
-                        <span>Phase Target: {ph.targetPct}%</span>
-                      </div>
+                    <div className="mt-2 text-[10px] text-slate-400 font-mono flex justify-between">
+                      <span>Eulerian Hydrodynamic Grid (INCOIS Coupling)</span>
+                      <span>Dispersion Model Version: OpenDrift Lagrangian v1.9</span>
                     </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* =================================================================== */}
-        {/* WORKSPACE TAB: MARINE DIGITAL TWIN SIMULATOR (Stage 20)             */}
-        {/* =================================================================== */}
-        {activeIncidentTab === "digitaltwin" && (
-          <div className="space-y-5 animate-fadeIn">
-            {/* Top Interactive Physics Slider Strip */}
-            <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E1EEF9]">
-                <div>
-                  <h2 className="heading-secondary text-base sm:text-lg font-bold text-[#0B2545]">
-                    Marine Digital Twin &bull; Real-Time Hydrodynamic Drift Engine
-                  </h2>
-                  <p className="body-description text-sm text-slate-600 font-body mt-1 leading-relaxed">
-                    Adjust ocean currents and atmospheric boundary winds to recalculate the forward trajectory and coastline landfall vector live.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      setSimWindSpeed(5.1);
-                      setSimWindDir(289);
-                      setSimCurrentSpeed(0.67);
-                      triggerToast("Simulation parameters reset to real-time INCOIS telemetry.");
-                    }}
-                    className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] text-xs font-semibold text-slate-600 hover:bg-[#F8FBFE] flex items-center gap-1 cursor-pointer"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Reset Telemetry</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 3 Physics Parameter Sliders */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
-                {/* Wind Speed */}
-                <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="font-bold text-[#0B2545]">Wind Speed (10m Drag)</span>
-                    <span className="font-mono font-bold text-[#1E5FBF]">{simWindSpeed.toFixed(1)} m/s</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={25}
-                    step={0.5}
-                    value={simWindSpeed}
-                    onChange={(e) => setSimWindSpeed(parseFloat(e.target.value))}
-                    className="w-full accent-[#1E5FBF] cursor-pointer"
-                  />
-                  <div className="flex justify-between text-[9px] text-slate-400 font-mono">
-                    <span>0 m/s (Calm)</span>
-                    <span>15 m/s (Gale)</span>
-                    <span>25 m/s (Storm)</span>
-                  </div>
-                </div>
-
-                {/* Wind Direction */}
-                <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="font-bold text-[#0B2545]">Wind Heading (Direction)</span>
-                    <span className="font-mono font-bold text-[#0EA5B7]">{simWindDir}° WNW</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={360}
-                    step={5}
-                    value={simWindDir}
-                    onChange={(e) => setSimWindDir(parseInt(e.target.value))}
-                    className="w-full accent-[#0EA5B7] cursor-pointer"
-                  />
-                  <div className="flex justify-between text-[9px] text-slate-400 font-mono">
-                    <span>0° (North)</span>
-                    <span>180° (South)</span>
-                    <span>360°</span>
-                  </div>
-                </div>
-
-                {/* Ocean Current Speed */}
-                <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="font-bold text-[#0B2545]">Ocean Surface Current</span>
-                    <span className="font-mono font-bold text-indigo-600">{simCurrentSpeed.toFixed(2)} m/s</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={2.0}
-                    step={0.05}
-                    value={simCurrentSpeed}
-                    onChange={(e) => setSimCurrentSpeed(parseFloat(e.target.value))}
-                    className="w-full accent-indigo-600 cursor-pointer"
-                  />
-                  <div className="flex justify-between text-[9px] text-slate-400 font-mono">
-                    <span>0.0 m/s</span>
-                    <span>1.0 m/s</span>
-                    <span>2.0 m/s (Strong)</span>
                   </div>
                 </div>
               </div>
-
-              {/* Dynamic Recalculated Output Strip */}
-              <div className="p-4 rounded-xl bg-[#0B2545] text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 font-mono shadow-md">
-                <div>
-                  <div className="text-[10px] text-slate-300 uppercase tracking-wider font-sans">
-                    Recalculated Landfall Prediction
-                  </div>
-                  <div className="text-xl font-bold text-amber-400 mt-0.5">
-                    ~ {Math.max(6, Math.round(38 / (simWindSpeed * 0.35 + simCurrentSpeed * 1.5 + 0.1))).toFixed(1)} Hours to Coast
-                  </div>
-                </div>
-
-                <div className="text-xs text-slate-300 space-y-1">
-                  <div>Drift Heading: <span className="text-white font-bold">{Math.round((simWindDir + 15) % 360)}° (South-West)</span></div>
-                  <div>High Risk Impact Sector: <span className="text-rose-400 font-bold">Alibaug Coastal Shallows (38 km)</span></div>
-                </div>
-
-                <button
-                  onClick={() => triggerToast("Simulation parameters committed to operational forecast.")}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] text-white text-xs font-bold font-sans shadow-xs cursor-pointer hover:brightness-110"
-                >
-                  Commit Forecast Run
-                </button>
-              </div>
-            </div>
-
-            {/* Digital Twin Map Visualization Canvas */}
-            <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)]">
-              <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9] mb-3">
-                <div className="flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-[#1E5FBF]" />
-                  <span className="text-xs font-bold text-[#0B2545] uppercase tracking-wider">
-                    Digital Twin Vector Overlay Canvas (Satellite + Surface Sheen + Current Vectors)
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs">
-                  <label className="flex items-center gap-1.5 cursor-pointer text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={twinShowVectors}
-                      onChange={(e) => setTwinShowVectors(e.target.checked)}
-                      className="rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
-                    />
-                    <span>Hydrodynamic Vectors</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={twinShowVessels}
-                      onChange={(e) => setTwinShowVessels(e.target.checked)}
-                      className="rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
-                    />
-                    <span>Vessel Tracks</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Contained Leaflet Mini-Map Component */}
-              <div className="h-96 w-full rounded-xl overflow-hidden border border-slate-200">
-                <IncidentMiniMap />
-              </div>
-
-              {/* Scrubber Controls */}
-              <div className="mt-4 pt-3 border-t border-[#E1EEF9] flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsPlayingTimeline(!isPlayingTimeline)}
-                    className="p-2 rounded-xl bg-[#0B2545] text-white hover:bg-[#1E5FBF] transition-colors cursor-pointer"
-                  >
-                    {isPlayingTimeline ? <RotateCcw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                  </button>
-                  <span className="font-bold text-[#0B2545]">
-                    {isPlayingTimeline ? "Playing Dispersion Dynamics" : "Scrub Time Window"}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-1 font-mono text-[11px]">
-                  {INCIDENT_DATA.timelineFrames.map((f, i) => (
-                    <button
-                      key={f.label}
-                      onClick={() => setSelectedTimelineIndex(i)}
-                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                        selectedTimelineIndex === i
-                          ? "bg-[#1E5FBF] text-white font-bold"
-                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                      }`}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-            {/* ================================================================= */}
-            {/* FOOTER                                                           */}
-            {/* ================================================================= */}
-            <footer className="pt-4 pb-2 border-t border-[#DCEEFC] flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-500 font-medium">
-              <div>
-                &copy; 2026 SAHAYYA &nbsp;|&nbsp; Ministry of Defence, Government of India
-              </div>
-              <div className="flex items-center gap-1.5 text-[#1E5FBF] font-bold">
-                <Waves className="w-3.5 h-3.5" />
-                <span>Safer Oceans. Stronger Tomorrow.</span>
-              </div>
-            </footer>
+            )}
           </div>
         </main>
       </div>
@@ -2014,10 +2375,10 @@ export const IncidentDetailPage: React.FC = () => {
 
       {/* Edit Overview Modal */}
       {showEditOverviewModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-body">
           <div className="w-full max-w-lg bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-5 text-slate-800">
             <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-              <div className="text-sm font-bold text-[#0B2545] flex items-center gap-2">
+              <div className="text-sm font-bold text-[#0B2545] flex items-center gap-2 font-display">
                 <Edit3 className="w-4 h-4 text-[#1E5FBF]" />
                 <span>Edit Incident Overview</span>
               </div>
@@ -2106,10 +2467,10 @@ export const IncidentDetailPage: React.FC = () => {
 
       {/* Share Modal */}
       {showShareModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-body">
           <div className="w-full max-w-md bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-5 text-slate-800">
             <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-              <div className="text-sm font-bold text-[#0B2545] flex items-center gap-2">
+              <div className="text-sm font-bold text-[#0B2545] flex items-center gap-2 font-display">
                 <Share2 className="w-4 h-4 text-[#1E5FBF]" />
                 <span>Share Incident Record</span>
               </div>
@@ -2143,22 +2504,67 @@ export const IncidentDetailPage: React.FC = () => {
         </div>
       )}
 
-      {/* Official 9-Page PDF Generate Report Modal */}
+      {/* Official Stage-Specific Generate Report Modal */}
       <ReportGenerationModal
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
+        stage={
+          activeIncidentTab === "recovery"
+            ? "response"
+            : activeIncidentTab === "digitaltwin"
+            ? "digitaltwin"
+            : "incident"
+        }
         incidentIdOrCode={effectiveIncidentId}
-        incidentTitle={INCIDENT_DATA.name}
+        incidentTitle={incidentDetail?.title || INCIDENT_DATA.name}
+        currentData={{
+          incidentId: effectiveIncidentId,
+          incidentTitle: incidentDetail?.title || INCIDENT_DATA.name,
+          overview: {
+            summary: overviewDescription,
+            slickAreaKm2: incidentDetail?.spill_area_km2 || 14.2,
+            estimatedVolumeM3: 48000,
+            coordinates: incidentDetail?.latitude ? [incidentDetail.latitude, incidentDetail.longitude] : [18.69, 72.38],
+            confidenceScore: 94.6,
+          },
+          environmental: {
+            windSpeedMs: simWindSpeed,
+            windDirectionDeg: simWindDir,
+            currentSpeedMs: simCurrentSpeed,
+          },
+          simulation: {
+            simWindSpeed,
+            simWindDir,
+            simCurrentSpeed,
+            netDriftKts: digitalTwinSimulation.netSpeedKts,
+            netHeadingDeg: digitalTwinSimulation.netHeadingDeg,
+            projectedArea24h: digitalTwinSimulation.dynamicArea * 1.35,
+            landfallEtaHours: digitalTwinSimulation.landfallEtaHours,
+            targetSector: digitalTwinSimulation.targetSector,
+          },
+          vessels: INCIDENT_DATA.vessels.map((v: any, i: number) => ({
+            rank: i + 1,
+            name: v.name,
+            mmsi: v.mmsi || "636019842",
+            imo: v.imo || "9314567",
+            flag: v.flag,
+            type: v.type,
+            cpaKm: v.cpa || (v.score > 80 ? 1.2 : 8.4),
+            minSogKts: v.minSog || v.speed || "3.4 kts",
+            darkGapMin: v.aisGap || (v.score > 80 ? 94 : 0),
+            liabilityScore: v.score,
+          })),
+        }}
       />
 
       {/* Vessel Forensic Evidence Modal */}
       {selectedCandidate && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-body">
           <div className="w-full max-w-xl bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-5 text-slate-800">
             <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
               <div className="flex items-center gap-2">
                 <Ship className="w-4 h-4 text-rose-600" />
-                <span className="text-sm font-bold text-[#0B2545]">
+                <span className="text-sm font-bold text-[#0B2545] font-display">
                   Vessel Forensic File &mdash; {selectedCandidate.name} ({selectedCandidate.score}%)
                 </span>
               </div>
@@ -2168,15 +2574,15 @@ export const IncidentDetailPage: React.FC = () => {
             </div>
 
             <div className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2 font-mono">
                 <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                  <div className="text-slate-500 text-[10px]">Trajectory Match</div>
+                  <div className="text-slate-500 text-[10px] font-sans">Trajectory Match</div>
                   <div className="text-lg font-black text-emerald-600">
                     {selectedCandidate.evidence?.trajectoryMatch || 99.4}%
                   </div>
                 </div>
                 <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                  <div className="text-slate-500 text-[10px]">AIS Transponder Gap</div>
+                  <div className="text-slate-500 text-[10px] font-sans">AIS Transponder Gap</div>
                   <div className="text-lg font-black text-rose-600">
                     {selectedCandidate.evidence?.aisAnomalyScore || 97.2}%
                   </div>
@@ -2215,11 +2621,11 @@ export const IncidentDetailPage: React.FC = () => {
 
       {/* All Candidates Modal */}
       {showAllCandidatesModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-body">
           <div className="w-full max-w-2xl bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-5 text-slate-800">
             <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-              <div className="text-sm font-bold text-[#0B2545]">
-                AIS Candidate Correlation Roster (4 Vessels in Time Window)
+              <div className="text-sm font-bold text-[#0B2545] font-display">
+                AIS Candidate Correlation Roster ({dynamicMapVessels.length} Vessels in Time Window)
               </div>
               <button onClick={() => setShowAllCandidatesModal(false)}>
                 <X className="w-4 h-4 text-slate-400 hover:text-slate-700" />
@@ -2227,11 +2633,12 @@ export const IncidentDetailPage: React.FC = () => {
             </div>
 
             <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-              {INCIDENT_DATA.vessels.map((v) => (
+              {dynamicMapVessels.map((v) => (
                 <div
-                  key={v.id}
+                  key={v.name + v.rank}
                   onClick={() => {
-                    setSelectedCandidate(v);
+                    const matched = INCIDENT_DATA.vessels.find((item) => item.rank === v.rank) || INCIDENT_DATA.vessels[0];
+                    setSelectedCandidate(matched);
                     setShowAllCandidatesModal(false);
                   }}
                   className="p-3 rounded-xl bg-[#F8FBFE] hover:bg-[#EFF6FD] border border-[#E1EEF9] flex items-center justify-between text-xs cursor-pointer transition-colors"
@@ -2240,15 +2647,15 @@ export const IncidentDetailPage: React.FC = () => {
                     <div className="font-bold text-[#0B2545] flex items-center gap-1.5">
                       <span>#{v.rank} {v.name}</span>
                       <span className="text-[10px] font-mono bg-[#E1EEF9] text-slate-700 px-1 py-0.2 rounded font-semibold">
-                        {v.flagCode}
+                        {v.flag}
                       </span>
                     </div>
                     <div className="text-[10px] text-slate-500 font-mono">
-                      IMO {v.imo} &middot; {v.type} &middot; CPA {v.cpa} &middot; AIS Gap {v.aisGap}
+                      IMO {v.imo} &middot; {v.type} &middot; SOG {v.speed} kts &middot; Heading {v.heading}°
                     </div>
                   </div>
-                  <div className={`text-base font-black ${v.score > 80 ? "text-rose-600" : "text-slate-700"}`}>
-                    {v.score}%
+                  <div className={`text-base font-black font-mono ${v.score > 80 ? "text-rose-600" : "text-slate-700"}`}>
+                    {v.score}% Match
                   </div>
                 </div>
               ))}
@@ -2268,10 +2675,10 @@ export const IncidentDetailPage: React.FC = () => {
 
       {/* Response Plan Builder Modal */}
       {showResponsePlanModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-body">
           <div className="w-full max-w-xl bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-5 text-slate-800">
             <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-              <div className="text-sm font-bold text-[#0B2545] flex items-center gap-2">
+              <div className="text-sm font-bold text-[#0B2545] flex items-center gap-2 font-display">
                 <Shield className="w-4 h-4 text-emerald-600" />
                 <span>Create Incident Response Plan &mdash; Tier Z-03</span>
               </div>
@@ -2348,7 +2755,9 @@ export const IncidentDetailPage: React.FC = () => {
               <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
                 <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
                   <span className="text-slate-400 block font-sans text-[10px]">Calculated Centroid</span>
-                  <span className="font-bold text-[#0B2545]">18.7810°N, 72.5098°E</span>
+                  <span className="font-bold text-[#0B2545]">
+                    {currentCoords[0].toFixed(4)}°N, {currentCoords[1].toFixed(4)}°E
+                  </span>
                 </div>
                 <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
                   <span className="text-slate-400 block font-sans text-[10px]">Kinematic Uncertainty</span>
@@ -2371,10 +2780,10 @@ export const IncidentDetailPage: React.FC = () => {
 
       {/* Detailed Analysis Modal */}
       {showDetailedAnalysisModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-body">
           <div className="w-full max-w-lg bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-5 text-slate-800">
             <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-              <div className="text-sm font-bold text-[#0B2545] flex items-center gap-2">
+              <div className="text-sm font-bold text-[#0B2545] flex items-center gap-2 font-display">
                 <Sparkles className="w-4 h-4 text-[#6366F1]" />
                 <span>Detailed Spill Hydrocarbon Characterization</span>
               </div>
@@ -2385,7 +2794,7 @@ export const IncidentDetailPage: React.FC = () => {
 
             <div className="space-y-3 text-xs text-slate-600">
               <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                <div className="font-bold text-[#0B2545] mb-1">Spectral Signature Profile</div>
+                <div className="font-bold text-[#0B2545] mb-1 font-display">Spectral &amp; Radar Signature Profile</div>
                 <p className="font-mono text-[11px] leading-relaxed text-slate-700">
                   {INCIDENT_DATA.spillDNA.spectralSignature}
                 </p>
@@ -2394,11 +2803,13 @@ export const IncidentDetailPage: React.FC = () => {
               <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
                 <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
                   <span className="text-slate-400 block font-sans text-[10px]">Shape Index</span>
-                  <span className="font-bold text-[#0B2545]">{INCIDENT_DATA.spillDNA.shapeIndex}</span>
+                  <span className="font-bold text-[#0B2545]">{spillDNA?.shape_index || INCIDENT_DATA.spillDNA.shapeIndex}</span>
                 </div>
                 <div className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
                   <span className="text-slate-400 block font-sans text-[10px]">Slick Orientation</span>
-                  <span className="font-bold text-[#0B2545]">{INCIDENT_DATA.spillDNA.orientation}</span>
+                  <span className="font-bold text-[#0B2545]">
+                    {spillDNA?.orientation_deg ? `${spillDNA.orientation_deg}° (NE-SW)` : INCIDENT_DATA.spillDNA.orientation}
+                  </span>
                 </div>
               </div>
             </div>
@@ -2417,10 +2828,10 @@ export const IncidentDetailPage: React.FC = () => {
 
       {/* Compare with Model Modal */}
       {showCompareModelModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-body">
           <div className="w-full max-w-2xl bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-5 text-slate-800">
             <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-              <div className="text-sm font-bold text-[#0B2545]">
+              <div className="text-sm font-bold text-[#0B2545] font-display">
                 Side-by-Side Dispersion: Observed SAR vs OpenDrift Model
               </div>
               <button onClick={() => setShowCompareModelModal(false)}>
@@ -2430,22 +2841,22 @@ export const IncidentDetailPage: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                <div className="font-bold text-[#0B2545] mb-1">Copernicus SAR Observed</div>
+                <div className="font-bold text-[#0B2545] mb-1 font-display">Copernicus SAR Observed</div>
                 <div className="h-32 rounded-lg bg-black overflow-hidden relative flex items-center justify-center mb-2">
                   <img src="/sar-pass.jpg" alt="SAR" className="w-full h-full object-cover" />
                 </div>
                 <div className="font-mono text-[10px] text-slate-600">
-                  Area: 276.04 km² · Confidence: 92.4%
+                  Area: {currentAreaKm2.toFixed(2)} km² · Confidence: 92.4%
                 </div>
               </div>
 
               <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                <div className="font-bold text-[#0B2545] mb-1">OpenDrift Model Run</div>
+                <div className="font-bold text-[#0B2545] mb-1 font-display">OpenDrift Model Run</div>
                 <div className="h-32 rounded-lg bg-[#0F2035] overflow-hidden relative flex items-center justify-center mb-2">
                   <div className="w-20 h-12 rounded-full bg-gradient-to-r from-red-600 to-amber-500 blur-[2px] opacity-80" />
                 </div>
                 <div className="font-mono text-[10px] text-slate-600">
-                  Area: 268.40 km² · Correlation: 94.8%
+                  Area: {(currentAreaKm2 * 0.97).toFixed(2)} km² · Correlation: 94.8%
                 </div>
               </div>
             </div>
@@ -2464,10 +2875,10 @@ export const IncidentDetailPage: React.FC = () => {
 
       {/* All Activity Modal */}
       {showAllActivityModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-body">
           <div className="w-full max-w-lg bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-5 text-slate-800">
             <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-              <div className="text-sm font-bold text-[#0B2545]">
+              <div className="text-sm font-bold text-[#0B2545] font-display">
                 Complete Incident Audit &amp; Activity Log
               </div>
               <button onClick={() => setShowAllActivityModal(false)}>
@@ -2476,19 +2887,19 @@ export const IncidentDetailPage: React.FC = () => {
             </div>
 
             <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1 text-xs">
-              {INCIDENT_DATA.activityLog.map((act) => (
+              {(incidentDetail?.activity_logs || INCIDENT_DATA.activityLog).map((act: any) => (
                 <div key={act.id} className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    {act.status === "completed" ? (
+                    {act.status === "done" || act.status === "completed" ? (
                       <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                    ) : act.status === "in-progress" ? (
-                      <span className="w-3 h-3 rounded-full bg-amber-500 animate-ping shrink-0" />
                     ) : (
                       <Circle className="w-4 h-4 text-slate-300 shrink-0" />
                     )}
-                    <span className="text-slate-700 font-medium">{act.text}</span>
+                    <span className="text-slate-700 font-medium">{act.event_text || act.text}</span>
                   </div>
-                  <span className="font-mono text-slate-400 text-[10px]">{act.time}</span>
+                  <span className="font-mono text-slate-400 text-[10px]">
+                    {act.occurred_at ? new Date(act.occurred_at).toUTCString().slice(17, 22) + " UTC" : act.time}
+                  </span>
                 </div>
               ))}
             </div>

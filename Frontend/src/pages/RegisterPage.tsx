@@ -17,10 +17,13 @@ import {
   Building,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { useLanguage } from "../context/LanguageContext";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
   const { register, socialLogin } = useAuth();
+  const { t } = useLanguage();
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -126,59 +129,46 @@ export const RegisterPage: React.FC = () => {
       {/* 3. HEADER & TOP NAV */}
       <header className="relative z-20 w-full px-6 sm:px-10 lg:px-14 pt-6 pb-2 flex items-center justify-between antialiased">
         <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-white to-sky-100 flex items-center justify-center shadow-[0_4px_12px_rgba(24,90,219,0.2)] border border-white/80 shrink-0">
-            <svg
-              className="w-7 h-7 sm:w-8 sm:h-8"
-              viewBox="0 0 44 44"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                d="M10 24C10 18.4772 14.4772 14 20 14C24.4183 14 28.1634 16.8579 29.4721 20.8579C30.7808 24.8579 34.5259 27.7157 38.9443 27.7157"
-                stroke="#185ADB"
-                strokeWidth="4"
-                strokeLinecap="round"
-              />
-              <path
-                d="M5.05572 16.2843C9.47413 16.2843 13.2192 19.1421 14.5279 23.1421C15.8366 27.1421 19.5817 30 24 30C29.5228 30 34 25.5228 34 20"
-                stroke="#06B6D4"
-                strokeWidth="4"
-                strokeLinecap="round"
-              />
-            </svg>
-          </div>
-
+          <img
+            src="/sahayya-logo.png"
+            alt="Sahayya Logo"
+            className="h-12 sm:h-14 w-auto object-contain drop-shadow-md"
+          />
           <div>
-            <h1 className="text-xl sm:text-2xl font-display font-bold tracking-[0.22em] text-[#0B2545] leading-none">
-              SAHAYYA
+            <h1 className="text-xl sm:text-2xl font-display font-bold tracking-[0.2em] text-[#0B2545] leading-none">
+              {t("brand.title")}
             </h1>
             <p className="text-[11px] sm:text-xs font-semibold text-slate-500 tracking-tight mt-1 font-body">
-              AI-Powered Marine Incident Command Center
+              {t("brand.subtitle")}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 sm:gap-4 text-white/90 text-xs sm:text-sm font-semibold tracking-wide drop-shadow-md font-body">
-          <span>Detect</span>
-          <span className="text-white/60 text-xs">•</span>
-          <span>Analyze</span>
-          <span className="text-white/60 text-xs">•</span>
-          <span>Protect</span>
+        <div className="flex items-center gap-3 sm:gap-5">
+          <div className="hidden sm:flex items-center gap-3 text-white/90 text-xs sm:text-sm font-semibold tracking-wide drop-shadow-md font-body">
+            <span>{t("nav.detect", "Detect")}</span>
+            <span className="text-white/60 text-xs">•</span>
+            <span>{t("nav.analyze", "Analyze")}</span>
+            <span className="text-white/60 text-xs">•</span>
+            <span>{t("nav.protect", "Protect")}</span>
 
-          <div className="ml-1 text-white/90">
-            <svg
-              className="w-5 h-5 sm:w-6 sm:h-6"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M2 12c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" />
-              <path d="M2 17c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" opacity="0.6" />
-            </svg>
+            <div className="ml-1 text-white/90">
+              <svg
+                className="w-5 h-5 sm:w-6 sm:h-6"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M2 12c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" />
+                <path d="M2 17c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" opacity="0.6" />
+              </svg>
+            </div>
           </div>
+
+          <LanguageSwitcher variant="light" />
         </div>
       </header>
 
@@ -187,16 +177,15 @@ export const RegisterPage: React.FC = () => {
         {/* Left Hero */}
         <div className="w-full lg:w-[50%] max-w-[620px] flex flex-col justify-center py-4 lg:py-6">
           <div className="font-display font-bold text-[#0B2545] tracking-tight text-4xl sm:text-5xl md:text-6xl lg:text-[4.25rem] leading-[1.06]">
-            <div>&ldquo;Cleaner Oceans</div>
-            <div>for a Safer</div>
+            <div>&ldquo;{t("auth.heroTitle1")}</div>
+            <div>{t("auth.heroTitle2")}</div>
             <div>
-              <span className="text-[#1877F2]">Tomorrow&rdquo;</span>
+              <span className="text-[#1877F2]">{t("auth.heroTitle3")}&rdquo;</span>
             </div>
           </div>
 
           <div className="mt-4 text-base sm:text-lg font-medium text-[#0F2A4A] leading-relaxed font-body">
-            <div>From Satellite to Solution &mdash;</div>
-            <div>Turning Ocean Data into Action.</div>
+            <div>{t("auth.heroSubtitle")}</div>
           </div>
 
           {/* 5 Feature Icons */}
@@ -206,7 +195,7 @@ export const RegisterPage: React.FC = () => {
                 <Satellite className="w-5 h-5 sm:w-6 sm:h-6 stroke-[1.8]" />
               </div>
               <span className="text-[11px] sm:text-xs font-semibold text-[#0B2545] mt-2 leading-tight">
-                Detect<br />Spills
+                {t("auth.feature1", "Detect Spills")}
               </span>
             </div>
 
@@ -215,7 +204,7 @@ export const RegisterPage: React.FC = () => {
                 <Brain className="w-5 h-5 sm:w-6 sm:h-6 stroke-[1.8]" />
               </div>
               <span className="text-[11px] sm:text-xs font-semibold text-[#0B2545] mt-2 leading-tight">
-                Find<br />Origins
+                {t("auth.feature2", "Find Origins")}
               </span>
             </div>
 
@@ -224,7 +213,7 @@ export const RegisterPage: React.FC = () => {
                 <Anchor className="w-5 h-5 sm:w-6 sm:h-6 stroke-[1.8]" />
               </div>
               <span className="text-[11px] sm:text-xs font-semibold text-[#0B2545] mt-2 leading-tight">
-                Identify<br />Vessels
+                {t("auth.feature3", "Identify Vessels")}
               </span>
             </div>
 
@@ -233,7 +222,7 @@ export const RegisterPage: React.FC = () => {
                 <Waves className="w-5 h-5 sm:w-6 sm:h-6 stroke-[1.8]" />
               </div>
               <span className="text-[11px] sm:text-xs font-semibold text-[#0B2545] mt-2 leading-tight">
-                Predict<br />Impact
+                {t("auth.feature4", "Predict Impact")}
               </span>
             </div>
 
@@ -242,7 +231,7 @@ export const RegisterPage: React.FC = () => {
                 <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6 stroke-[1.8]" />
               </div>
               <span className="text-[11px] sm:text-xs font-semibold text-[#0B2545] mt-2 leading-tight">
-                Enable<br />Response
+                {t("auth.feature5", "Enable Response")}
               </span>
             </div>
           </div>
@@ -250,14 +239,21 @@ export const RegisterPage: React.FC = () => {
 
         {/* Right Registration Card */}
         <div className="w-full lg:w-auto flex justify-center lg:justify-end py-4 lg:py-0 font-body">
-          <div className="w-full max-w-[450px] bg-white/90 backdrop-blur-xl rounded-[24px] shadow-[0_20px_60px_rgba(8,37,68,0.22)] border border-white/90 p-6 sm:p-8 transition-all duration-300">
-            <div className="mb-4">
-              <h2 className="heading-secondary text-2xl sm:text-[26px] text-[#0B2545]">
-                Create Your Account
-              </h2>
-              <p className="body-text text-xs text-slate-500 font-body mt-1">
-                Register to access Sahayya Maritime Intelligence
-              </p>
+          <div className="w-full max-w-[480px] lg:max-w-[490px] xl:max-w-[505px] bg-white/96 backdrop-blur-2xl rounded-[28px] shadow-[0_24px_70px_rgba(4,22,41,0.32),0_8px_24px_rgba(0,0,0,0.08)] border border-white/90 p-7 sm:p-9 transition-all duration-300">
+            <div className="mb-5 flex items-center gap-3.5">
+              <img
+                src="/sahayya-logo.png"
+                alt="Sahayya"
+                className="w-12 h-12 sm:w-14 sm:h-14 object-contain drop-shadow-sm shrink-0"
+              />
+              <div>
+                <h2 className="font-display text-[26px] sm:text-[28px] font-bold text-[#0B2545] tracking-tight leading-tight">
+                  {t("auth.createAccount", "Create Your Account")}
+                </h2>
+                <p className="text-[13.5px] text-slate-600 font-medium font-body mt-0.5">
+                  {t("auth.registerDesc", "Register to access Sahayya Maritime Intelligence")}
+                </p>
+              </div>
             </div>
 
             {errorMessage && (
@@ -279,7 +275,7 @@ export const RegisterPage: React.FC = () => {
                     required
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Enter your full name"
+                    placeholder={t("auth.fullName", "Enter your full name")}
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#F0F4F9]/90 border border-slate-200/90 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/15 transition-all input-text font-body"
                   />
                 </div>
@@ -296,7 +292,7 @@ export const RegisterPage: React.FC = () => {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="Enter your email address"
+                    placeholder={t("auth.email", "Enter your email address")}
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#F0F4F9]/90 border border-slate-200/90 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/15 transition-all input-text font-body"
                   />
                 </div>
@@ -313,7 +309,7 @@ export const RegisterPage: React.FC = () => {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Password"
+                    placeholder={t("auth.password", "Password")}
                     className="w-full pl-9 pr-8 py-2.5 rounded-xl bg-[#F0F4F9]/90 border border-slate-200/90 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/15 transition-all input-text font-body"
                   />
                   <button
@@ -334,7 +330,7 @@ export const RegisterPage: React.FC = () => {
                     required
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Confirm"
+                    placeholder={t("auth.confirmPassword", "Confirm")}
                     className="w-full pl-9 pr-8 py-2.5 rounded-xl bg-[#F0F4F9]/90 border border-slate-200/90 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/15 transition-all input-text font-body"
                   />
                   <button
@@ -358,12 +354,12 @@ export const RegisterPage: React.FC = () => {
                     onChange={(e) => setOrganization(e.target.value)}
                     className="w-full pl-10 pr-8 py-2.5 rounded-xl bg-[#F0F4F9]/90 border border-slate-200/90 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/15 appearance-none cursor-pointer input-text font-body"
                   >
-                    <option value="Coast Guard">Coast Guard</option>
-                    <option value="Port Authority">Port Authority</option>
-                    <option value="Environmental Regulator">Environmental Regulator</option>
-                    <option value="Researcher">Researcher</option>
-                    <option value="NGO">NGO / Marine Conservation</option>
-                    <option value="Other">Other Authority</option>
+                    <option value="Coast Guard">{t("auth.orgCoastGuard", "Coast Guard")}</option>
+                    <option value="Port Authority">{t("auth.orgPortAuthority", "Port Authority")}</option>
+                    <option value="Environmental Regulator">{t("auth.orgEnvironmentalRegulator", "Environmental Regulator")}</option>
+                    <option value="Researcher">{t("auth.orgResearcher", "Researcher")}</option>
+                    <option value="NGO">{t("auth.orgNGO", "NGO / Marine Conservation")}</option>
+                    <option value="Other">{t("auth.orgOther", "Other Authority")}</option>
                   </select>
                 </div>
               </div>
@@ -378,7 +374,7 @@ export const RegisterPage: React.FC = () => {
                     className="w-4 h-4 mt-0.5 rounded border-slate-300 text-[#1E5FBF] focus:ring-[#1E5FBF] accent-[#1E5FBF] cursor-pointer"
                   />
                   <span>
-                    I agree to the{" "}
+                    {t("auth.agreeTermsPrefix", "I agree to the")}{" "}
                     <a
                       href="#terms"
                       onClick={(e) => {
@@ -387,18 +383,18 @@ export const RegisterPage: React.FC = () => {
                       }}
                       className="text-[#1E5FBF] hover:underline"
                     >
-                      Terms of Use
+                      {t("auth.termsOfUse", "Terms of Use")}
                     </a>{" "}
-                    and{" "}
+                    {t("auth.agreeTermsAnd", "and")}{" "}
                     <a
                       href="#privacy"
                       onClick={(e) => {
                         e.preventDefault();
-                        alert("Privacy Policy: All data is processed according to Government of India data security regulations.");
+                        alert("Privacy Policy: All data is processed according to authorized maritime data security regulations.");
                       }}
                       className="text-[#1E5FBF] hover:underline"
                     >
-                      Privacy Policy
+                      {t("auth.privacyPolicy", "Privacy Policy")}
                     </a>
                   </span>
                 </label>
@@ -416,7 +412,7 @@ export const RegisterPage: React.FC = () => {
                   ) : (
                     <>
                       <ArrowRight className="w-4 h-4" />
-                      <span>Create Account</span>
+                      <span>{t("action.createAccount", "Create Account")}</span>
                     </>
                   )}
                 </button>
@@ -428,7 +424,7 @@ export const RegisterPage: React.FC = () => {
                   <div className="w-full border-t border-slate-200" />
                 </div>
                 <span className="relative px-3 bg-white/90 micro-text font-medium text-slate-400 uppercase tracking-wider font-body">
-                  Or continue with
+                  {t("auth.orContinueWith", "Or continue with")}
                 </span>
               </div>
 
@@ -475,12 +471,12 @@ export const RegisterPage: React.FC = () => {
               {/* Footer line */}
               <div className="text-center pt-2 font-body">
                 <p className="body-text text-xs text-slate-500 font-normal font-body">
-                  Already have an account?{" "}
+                  {t("auth.haveAccount", "Already have an account?")}{" "}
                   <Link
                     to="/login"
                     className="font-semibold text-[#1E5FBF] hover:text-[#185ADB] hover:underline transition-colors"
                   >
-                    Login
+                    {t("action.signIn", "Login")}
                   </Link>
                 </p>
               </div>

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
+  User,
   Mail,
   Lock,
   Eye,
@@ -15,11 +16,15 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { useLanguage } from "../context/LanguageContext";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const { login, socialLogin } = useAuth();
+  const { login } = useAuth();
+  const { t } = useLanguage();
 
+  const [firstName, setFirstName] = useState(() => localStorage.getItem("sahayya_remember_name") || "");
   const [email, setEmail] = useState(() => localStorage.getItem("sahayya_remember_email") || "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -31,7 +36,7 @@ export const LoginPage: React.FC = () => {
     e.preventDefault();
     setErrorMessage(null);
 
-    const result = login(email, password, rememberMe);
+    const result = login(email, password, rememberMe, firstName);
     if (!result.success) {
       setErrorMessage(result.error || "Login failed. Please check your credentials.");
       return;
@@ -44,15 +49,6 @@ export const LoginPage: React.FC = () => {
     }, 400);
   };
 
-  const handleSocial = (provider: "google" | "facebook") => {
-    setIsLoading(true);
-    setTimeout(() => {
-      socialLogin(provider);
-      setIsLoading(false);
-      navigate("/dashboard");
-    }, 500);
-  };
-
   return (
     <div className="relative w-screen min-h-screen overflow-x-hidden overflow-y-auto lg:overflow-hidden select-none bg-[#031525] font-sans flex flex-col justify-between">
       {/* 1. FULL-BLEED OCEAN PHOTO BACKGROUND */}
@@ -63,8 +59,8 @@ export const LoginPage: React.FC = () => {
         }}
       />
 
-      {/* Subtle lighting overlay */}
-      <div className="absolute inset-0 bg-gradient-to-r from-white/10 via-transparent to-[#041629]/20 pointer-events-none" />
+      {/* Subtle ambient lighting & readability overlay */}
+      <div className="absolute inset-0 bg-gradient-to-r from-white/15 via-white/5 to-[#041629]/25 pointer-events-none" />
 
       {/* 2. FAINT SATELLITE & GLOBE CONTOUR LINES OVERLAY */}
       <div className="absolute top-0 right-0 w-[480px] h-[380px] pointer-events-none overflow-hidden opacity-70 hidden md:block">
@@ -119,45 +115,33 @@ export const LoginPage: React.FC = () => {
       <header className="relative z-20 w-full px-6 sm:px-10 lg:px-14 pt-6 pb-2 flex items-center justify-between antialiased">
         {/* Top-Left Logo & Wordmark */}
         <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-white to-sky-100 flex items-center justify-center shadow-[0_4px_12px_rgba(24,90,219,0.2)] border border-white/80 shrink-0">
-            <svg
-              className="w-7 h-7 sm:w-8 sm:h-8"
-              viewBox="0 0 44 44"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                d="M10 24C10 18.4772 14.4772 14 20 14C24.4183 14 28.1634 16.8579 29.4721 20.8579C30.7808 24.8579 34.5259 27.7157 38.9443 27.7157"
-                stroke="#185ADB"
-                strokeWidth="4"
-                strokeLinecap="round"
-              />
-              <path
-                d="M5.05572 16.2843C9.47413 16.2843 13.2192 19.1421 14.5279 23.1421C15.8366 27.1421 19.5817 30 24 30C29.5228 30 34 25.5228 34 20"
-                stroke="#06B6D4"
-                strokeWidth="4"
-                strokeLinecap="round"
-              />
-            </svg>
-          </div>
-
+          <img
+            src="/sahayya-logo.png"
+            alt="Sahayya Logo"
+            className="h-12 sm:h-14 w-auto object-contain drop-shadow-md"
+          />
           <div>
-            <h1 className="text-xl sm:text-2xl font-display font-bold tracking-[0.22em] text-[#0B2545] leading-none">
-              SAHAYYA
+            <h1 className="text-xl sm:text-2xl font-display font-bold tracking-[0.2em] text-[#0B2545] leading-none">
+              {t("brand.name", "SAHAYYA")}
             </h1>
             <p className="text-[11px] sm:text-xs font-semibold text-slate-500 tracking-tight mt-1 font-body">
-              AI-Powered Marine Incident Command Center
+              {t("brand.tagline", "Maritime Defense • Environmental Forensics • Intelligence")}
             </p>
           </div>
         </div>
 
-        {/* Top-Right Nav */}
+        {/* Top-Right Nav + Multi-Language Selector */}
         <div className="flex items-center gap-3 sm:gap-4 text-white/90 text-xs sm:text-sm font-semibold tracking-wide drop-shadow-md font-body">
-          <span>Detect</span>
-          <span className="text-white/60 text-xs">•</span>
-          <span>Analyze</span>
-          <span className="text-white/60 text-xs">•</span>
-          <span>Protect</span>
+          {/* Multi-Language Selector */}
+          <LanguageSwitcher variant="light" />
+
+          <div className="hidden sm:flex items-center gap-2">
+            <span>Detect</span>
+            <span className="text-white/60 text-xs">•</span>
+            <span>Analyze</span>
+            <span className="text-white/60 text-xs">•</span>
+            <span>Protect</span>
+          </div>
 
           <div className="ml-1 text-white/90">
             <svg
@@ -179,18 +163,17 @@ export const LoginPage: React.FC = () => {
       {/* 4. MAIN SPLIT CONTENT */}
       <main className="relative z-10 w-full min-h-[calc(100vh-8.5rem)] px-6 sm:px-10 lg:px-14 flex flex-col lg:flex-row items-center justify-between py-6 lg:py-0 antialiased">
         {/* Left Hero Section */}
-        <div className="w-full lg:w-[54%] max-w-[660px] flex flex-col justify-center py-4 lg:py-8">
-          <div className="font-display font-bold text-[#0B2545] tracking-tight text-4xl sm:text-5xl md:text-6xl lg:text-[4.25rem] leading-[1.06]">
-            <div>&ldquo;Cleaner Oceans</div>
-            <div>for a Safer</div>
+        <div className="w-full lg:w-[50%] max-w-[640px] flex flex-col justify-center py-4 lg:py-8">
+          <div className="font-display font-bold text-[#0B2545] tracking-[-0.02em] text-4xl sm:text-5xl md:text-[3.5rem] lg:text-[3.75rem] xl:text-[4rem] leading-[1.02] drop-shadow-[0_2px_14px_rgba(255,255,255,0.65)]">
+            <div>&ldquo;{t("auth.heroTitle1", "Cleaner Oceans")}</div>
+            <div>{t("auth.heroTitle2", "for a Safer")}</div>
             <div>
-              <span className="text-[#1877F2]">Tomorrow&rdquo;</span>
+              <span className="text-[#185ADB] font-bold">{t("auth.heroTitle3", "Tomorrow")}&rdquo;</span>
             </div>
           </div>
 
-          <div className="mt-4 text-base sm:text-lg font-medium text-[#0F2A4A] leading-relaxed font-body">
-            <div>From Satellite to Solution &mdash;</div>
-            <div>Turning Ocean Data into Action.</div>
+          <div className="mt-4 sm:mt-5 text-base sm:text-[17px] lg:text-lg font-medium text-[#0F2A4A] leading-relaxed font-body drop-shadow-[0_1px_8px_rgba(255,255,255,0.5)]">
+            <div>{t("auth.heroSubtitle", "From Satellite to Solution — Turning Ocean Data into Action.")}</div>
           </div>
 
           {/* 5 Feature Icons */}
@@ -244,25 +227,51 @@ export const LoginPage: React.FC = () => {
 
         {/* Right Floating Login Card */}
         <div className="w-full lg:w-auto flex justify-center lg:justify-end py-6 lg:py-0 font-body">
-          <div className="w-full max-w-[430px] bg-white/90 backdrop-blur-xl rounded-[24px] shadow-[0_20px_60px_rgba(8,37,68,0.22)] border border-white/90 p-7 sm:p-10 transition-all duration-300 hover:shadow-[0_25px_70px_rgba(8,37,68,0.28)]">
-            <div className="mb-6">
-              <h2 className="heading-secondary text-2xl sm:text-[28px] text-[#0B2545]">
-                Welcome Back
-              </h2>
-              <p className="body-text text-sm text-slate-500 font-body mt-1.5">
-                Sign in to continue to Sahayya
-              </p>
+          <div className="w-full max-w-[480px] lg:max-w-[490px] xl:max-w-[505px] bg-white/96 backdrop-blur-2xl rounded-[28px] shadow-[0_24px_70px_rgba(4,22,41,0.32),0_8px_24px_rgba(0,0,0,0.08)] border border-white/90 p-8 sm:p-10 transition-all duration-300 hover:shadow-[0_28px_80px_rgba(4,22,41,0.38)]">
+            <div className="mb-7 flex items-center gap-3.5">
+              <img
+                src="/sahayya-logo.png"
+                alt="Sahayya"
+                className="w-12 h-12 sm:w-14 sm:h-14 object-contain drop-shadow-sm shrink-0"
+              />
+              <div>
+                <h2 className="font-display text-[26px] sm:text-[30px] font-bold text-[#0B2545] tracking-tight leading-tight">
+                  {t("auth.welcomeBack", "Welcome Back")}
+                </h2>
+                <p className="text-[14px] sm:text-[15px] text-slate-600 font-medium font-body mt-0.5">
+                  {t("auth.signInDesc", "Sign in to continue to Sahayya Command")}
+                </p>
+              </div>
             </div>
 
             {/* Error Message Box */}
             {errorMessage && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-700 animate-fadeIn font-body">
+              <div className="mb-5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-700 animate-fadeIn font-body">
                 <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-                <span>{errorMessage}</span>
+                <span className="font-medium">{errorMessage}</span>
               </div>
             )}
 
             <form onSubmit={handleSubmit} className="space-y-4 font-body">
+              {/* First Name / Full Name Input */}
+              <div>
+                <div className="relative flex items-center">
+                  <span className="absolute left-4 text-slate-400 pointer-events-none">
+                    <User className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => {
+                      setFirstName(e.target.value);
+                      if (errorMessage) setErrorMessage(null);
+                    }}
+                    placeholder={t("auth.firstName", "Enter your First Name")}
+                    className="w-full pl-11 pr-4 py-3.5 rounded-2xl bg-[#F4F7FB] border border-slate-200 text-[14.5px] text-slate-900 placeholder:text-[14px] placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/20 transition-all font-body"
+                  />
+                </div>
+              </div>
+
               {/* Email Input */}
               <div>
                 <div className="relative flex items-center">
@@ -276,8 +285,8 @@ export const LoginPage: React.FC = () => {
                       setEmail(e.target.value);
                       if (errorMessage) setErrorMessage(null);
                     }}
-                    placeholder="Enter your email address"
-                    className="w-full pl-11 pr-4 py-3 rounded-2xl bg-[#F0F4F9]/90 border border-slate-200/90 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/15 transition-all input-text font-body"
+                    placeholder={t("auth.email", "Enter your email address")}
+                    className="w-full pl-11 pr-4 py-3.5 rounded-2xl bg-[#F4F7FB] border border-slate-200 text-[14.5px] text-slate-900 placeholder:text-[14px] placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/20 transition-all font-body"
                   />
                 </div>
               </div>
@@ -295,13 +304,13 @@ export const LoginPage: React.FC = () => {
                       setPassword(e.target.value);
                       if (errorMessage) setErrorMessage(null);
                     }}
-                    placeholder="Enter your password"
-                    className="w-full pl-11 pr-11 py-3 rounded-2xl bg-[#F0F4F9]/90 border border-slate-200/90 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/15 transition-all input-text font-body"
+                    placeholder={t("auth.password", "Password")}
+                    className="w-full pl-11 pr-11 py-3.5 rounded-2xl bg-[#F4F7FB] border border-slate-200 text-[14.5px] text-slate-900 placeholder:text-[14px] placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-2 focus:ring-[#1E5FBF]/20 transition-all font-body"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
+                    className="absolute right-4 text-slate-400 hover:text-slate-700 focus:outline-none transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -309,15 +318,15 @@ export const LoginPage: React.FC = () => {
               </div>
 
               {/* Remember Me & Forgot Password */}
-              <div className="flex items-center justify-between pt-1 text-xs font-body">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
+              <div className="flex items-center justify-between pt-1.5 text-[14px] font-body">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={rememberMe}
                     onChange={(e) => setRememberMe(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300 text-[#1E5FBF] focus:ring-[#1E5FBF] focus:ring-offset-0 cursor-pointer accent-[#1E5FBF]"
+                    className="w-4 h-4 rounded border-slate-300 text-[#185ADB] focus:ring-[#185ADB] focus:ring-offset-0 cursor-pointer accent-[#185ADB]"
                   />
-                  <span className="text-[#0B2545]/80 font-medium font-body">Remember me</span>
+                  <span className="text-slate-700 font-medium font-body">Remember me</span>
                 </label>
 
                 <a
@@ -326,91 +335,39 @@ export const LoginPage: React.FC = () => {
                     e.preventDefault();
                     alert("A password reset link has been dispatched to your email address.");
                   }}
-                  className="font-semibold text-[#1E5FBF] hover:text-[#185ADB] hover:underline transition-colors font-body"
+                  className="font-semibold text-[#185ADB] hover:text-[#0F3E99] hover:underline transition-colors font-body"
                 >
                   Forgot password?
                 </a>
               </div>
 
-              {/* Primary Button */}
-              <div className="pt-2">
+              {/* Primary Login Button */}
+              <div className="pt-3">
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-3.5 px-6 rounded-full bg-gradient-to-r from-[#185ADB] via-[#1E6FFB] to-[#38BDF8] text-white btn-text shadow-[0_8px_20px_rgba(24,90,219,0.32)] hover:shadow-[0_10px_25px_rgba(24,90,219,0.42)] hover:from-[#1448B0] hover:to-[#2563EB] active:scale-[0.99] transition-all duration-200 flex items-center justify-center gap-2 group cursor-pointer font-body"
+                  className="w-full py-3.5 px-6 rounded-full bg-gradient-to-r from-[#185ADB] via-[#1E6FFB] to-[#38BDF8] text-white text-[15px] font-semibold shadow-[0_8px_25px_rgba(24,90,219,0.35)] hover:shadow-[0_12px_30px_rgba(24,90,219,0.45)] hover:from-[#1448B0] hover:to-[#2563EB] active:scale-[0.99] transition-all duration-200 flex items-center justify-center gap-2 group cursor-pointer font-body"
                 >
                   {isLoading ? (
                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   ) : (
                     <>
                       <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5" />
-                      <span>Login</span>
+                      <span>{t("action.signIn", "Login")}</span>
                     </>
                   )}
                 </button>
               </div>
 
-              {/* Divider */}
-              <div className="relative flex items-center justify-center py-2 font-body">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-slate-200" />
-                </div>
-                <span className="relative px-3 bg-white/90 micro-text font-medium text-slate-400 uppercase tracking-wider font-body">
-                  Or continue with
-                </span>
-              </div>
-
-              {/* Social Buttons: Google & Facebook */}
-              <div className="grid grid-cols-2 gap-3 font-body">
-                {/* Google */}
-                <button
-                  type="button"
-                  onClick={() => handleSocial("google")}
-                  className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-full bg-white border border-slate-200 hover:bg-slate-50 hover:border-slate-300 text-xs font-semibold text-slate-700 shadow-sm transition-all cursor-pointer font-body btn-text"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
-                    <path
-                      fill="#4285F4"
-                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-                    />
-                  </svg>
-                  <span>Google</span>
-                </button>
-
-                {/* Facebook */}
-                <button
-                  type="button"
-                  onClick={() => handleSocial("facebook")}
-                  className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-full bg-white border border-slate-200 hover:bg-slate-50 hover:border-slate-300 text-xs font-semibold text-slate-700 shadow-sm transition-all cursor-pointer font-body btn-text"
-                >
-                  <svg className="w-4 h-4 fill-[#1877F2]" viewBox="0 0 24 24">
-                    <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                  </svg>
-                  <span>Facebook</span>
-                </button>
-              </div>
-
               {/* Footer line linking to Register */}
-              <div className="text-center pt-2 font-body">
-                <p className="body-text text-xs text-slate-500 font-normal font-body">
-                  Don&apos;t have an account?{" "}
+              <div className="text-center pt-5 font-body">
+                <p className="text-[14px] text-slate-600 font-medium font-body">
+                  {t("auth.dontHaveAccount", "Don't have an account?")}{" "}
                   <Link
                     to="/register"
-                    className="font-semibold text-[#1E5FBF] hover:text-[#185ADB] hover:underline transition-colors"
+                    className="font-bold text-[#185ADB] hover:text-[#0F3E99] hover:underline transition-colors ml-1"
                   >
-                    Register
+                    {t("action.createAccount", "Register")}
                   </Link>
                 </p>
               </div>

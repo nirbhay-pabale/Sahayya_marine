@@ -40,8 +40,12 @@ import {
   CheckCircle2,
   Fish,
   Flag,
+  ZoomIn,
+  Send,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { useLanguage } from "../context/LanguageContext";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { getAvatarUrl } from "../services/api";
 import { INCIDENT_DATA, VesselCandidate } from "../data/incidentData";
 import sahayyaApi from "../services/api";
@@ -49,10 +53,12 @@ import sahayyaSocket from "../services/socket";
 import { MapPanel } from "../components/MapPanel";
 import { ReportGenerationModal } from "../components/ReportGenerationModal";
 import { EvidenceGraphModal } from "../components/EvidenceGraphModal";
+import { ForensicZoomModal, ForensicZoomTab } from "../components/ForensicZoomModal";
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { t } = useLanguage();
 
   // Navigation state
   const [activeNav, setActiveNav] = useState("Dashboard");
@@ -159,6 +165,9 @@ export const DashboardPage: React.FC = () => {
   const [modelPitch, setModelPitch] = useState(22);
   const [modelYaw, setModelYaw] = useState(-30);
 
+  // Forensic Deep-Dive Zoom Modal State
+  const [forensicZoomTarget, setForensicZoomTarget] = useState<ForensicZoomTab | null>(null);
+
   // Footer Modal state
   const [footerModalContent, setFooterModalContent] = useState<{ title: string; body: string } | null>(null);
 
@@ -223,54 +232,29 @@ export const DashboardPage: React.FC = () => {
             </div>
           </button>
 
-          {/* Government of India Emblem (Ashoka Lion Capital SVG) */}
-          <div className="flex items-center gap-2.5 pr-4 border-r border-[#E1EEF9]">
-            <div className="w-8 h-8 flex items-center justify-center text-slate-700 shrink-0">
-              <svg className="w-7 h-7" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 2c4.41 0 8 3.59 8 8s-3.59 8-8 8-8-3.59-8-8 3.59-8 8-8zm-1 3v4h2V7h-2zm0 6v4h2v-4h-2z" opacity="0.2" />
-                <path d="M12 3.5l1.5 3h3.5l-2.8 2.2 1 3.5-3.2-2.1-3.2 2.1 1-3.5-2.8-2.2h3.5z" />
-                <path d="M7 16h10v2H7zm2 3h6v1.5H9z" />
-              </svg>
-            </div>
-            <div className="hidden sm:block leading-tight">
-              <div className="text-[11px] font-bold tracking-wide text-[#0B2545] uppercase">
-                Ministry of Defence
-              </div>
-              <div className="text-[10px] text-slate-500 font-medium">
-                Government of India
-              </div>
-            </div>
-          </div>
-
-          {/* Sahayya Logo & Tagline */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-white to-sky-100 flex items-center justify-center shadow-md border border-[#E1EEF9] shrink-0">
-              <svg className="w-6 h-6" viewBox="0 0 44 44" fill="none">
-                <path
-                  d="M10 24C10 18.4772 14.4772 14 20 14C24.4183 14 28.1634 16.8579 29.4721 20.8579C30.7808 24.8579 34.5259 27.7157 38.9443 27.7157"
-                  stroke="#185ADB"
-                  strokeWidth="4"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M5.05572 16.2843C9.47413 16.2843 13.2192 19.1421 14.5279 23.1421C15.8366 27.1421 19.5817 30 24 30C29.5228 30 34 25.5228 34 20"
-                  stroke="#06B6D4"
-                  strokeWidth="4"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>
-            <div>
+          {/* Sahayya Official Logo & Brand */}
+          <div 
+            onClick={() => {
+              triggerToast("Sahayya Maritime Incident Command System");
+            }}
+            className="flex items-center gap-3 cursor-pointer group select-none"
+          >
+            <img 
+              src="/sahayya-logo.png" 
+              alt="Sahayya Logo" 
+              className="h-11 w-auto object-contain transition-transform duration-200 group-hover:scale-105 drop-shadow-sm" 
+            />
+            <div className="flex flex-col">
               <div className="flex items-center gap-2">
-                <span className="font-display text-lg font-bold tracking-[0.14em] text-[#0B2545]">
-                  SAHAYYA
+                <span className="font-display text-lg sm:text-xl font-bold tracking-[0.14em] text-[#0B2545] leading-none">
+                  {t("brand.name", "SAHAYYA")}
                 </span>
-                <span className="badge-text bg-emerald-100 text-emerald-700 border border-emerald-300 text-[10px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wider">
-                  BETA
+                <span className="badge-text bg-sky-100 text-[#1E5FBF] border border-sky-300/60 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                  {t("brand.mdaOps", "MDA COMMAND")}
                 </span>
               </div>
-              <p className="text-[11px] font-body text-slate-500 hidden md:block">
-                Safer Seas. Cleaner Oceans. Stronger Tomorrow.
+              <p className="text-[10px] sm:text-[10.5px] font-body text-slate-500 font-medium tracking-tight mt-0.5 hidden sm:block">
+                {t("brand.tagline", "Maritime Defense • Environmental Forensics • Intelligence")}
               </p>
             </div>
           </div>
@@ -287,7 +271,7 @@ export const DashboardPage: React.FC = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setIsSearchFocused(true)}
               onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-              placeholder="Search vessel (IMO, name), location or coordinates..."
+              placeholder={t("action.search", "Search vessel (IMO, name), location or coordinates...")}
               className="w-full pl-9 pr-12 py-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] text-xs font-body text-slate-700 placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-1 focus:ring-[#1E5FBF] transition-all"
             />
             <span className="absolute right-2.5 px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-white border border-[#E1EEF9] text-slate-500 shadow-2xs pointer-events-none">
@@ -298,7 +282,7 @@ export const DashboardPage: React.FC = () => {
             {isSearchFocused && (
               <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-[#E1EEF9] rounded-2xl shadow-[0_10px_30px_rgba(30,95,191,0.15)] py-2 z-50 animate-fadeIn">
                 <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Quick Suggestions
+                  {t("dash.quickSuggestions", "Quick Suggestions")}
                 </div>
                 <div
                   onMouseDown={() => {
@@ -333,6 +317,9 @@ export const DashboardPage: React.FC = () => {
 
         {/* Right: Live Clock, Systems Operational, Notifications & Profile */}
         <div className="flex items-center gap-3 sm:gap-4">
+          {/* Multi-Language Selector */}
+          <LanguageSwitcher variant="light" />
+
           {/* UTC & IST Live Clock */}
           <div className="hidden xl:flex flex-col text-right">
             <div className="text-xs font-mono font-semibold text-[#0B2545]">
@@ -348,7 +335,7 @@ export const DashboardPage: React.FC = () => {
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <div className="text-left leading-tight">
               <div className="text-xs font-bold text-emerald-700">
-                Systems Operational
+                {t("status.operational", "Systems Operational")}
               </div>
               <div className="text-[9px] text-emerald-600">
                 Last data update: 5 min ago
@@ -409,15 +396,13 @@ export const DashboardPage: React.FC = () => {
                     alt={user.name || "Officer"}
                     className="w-full h-full object-cover"
                   />
-                ) : user?.name ? (
-                  user.name.slice(0, 2).toUpperCase()
                 ) : (
-                  "SK"
+                  user?.name ? (user.name.trim().split(" ").length === 1 ? user.name.trim().slice(0, 2).toUpperCase() : (user.name.trim().split(" ")[0][0] + user.name.trim().split(" ")[user.name.trim().split(" ").length - 1][0]).toUpperCase()) : "OF"
                 )}
               </div>
               <div className="hidden sm:block text-left leading-tight">
                 <div className="text-xs font-bold text-[#0B2545]">
-                  {user?.name || "S. Kumar"}
+                  {user?.name || "Officer"}
                 </div>
                 <div className="text-[10px] text-slate-500">
                   {user?.role || "Coast Guard"}
@@ -429,8 +414,8 @@ export const DashboardPage: React.FC = () => {
             {showUserMenu && (
               <div className="absolute right-0 mt-2 w-52 bg-white border border-[#E1EEF9] rounded-2xl shadow-[0_10px_30px_rgba(30,95,191,0.15)] p-2 z-50 animate-fadeIn">
                 <div className="px-3 py-2 border-b border-slate-100 mb-1">
-                  <div className="text-xs font-bold text-[#0B2545]">{user?.name || "S. Kumar"}</div>
-                  <div className="text-[10px] text-slate-400">{user?.email || "s.kumar@coastguard.gov.in"}</div>
+                  <div className="text-xs font-bold text-[#0B2545]">{user?.name || "Officer"}</div>
+                  <div className="text-[10px] text-slate-400">{user?.email || "officer@indiancoastguard.gov.in"}</div>
                 </div>
                 <button
                   onClick={() => {
@@ -490,17 +475,19 @@ export const DashboardPage: React.FC = () => {
             }`}
           >
             {[
-              { id: "Dashboard", icon: Home, label: "Home", path: "/dashboard" },
-              { id: "Map", icon: MapIcon, label: "Map", path: "/map" },
-              { id: "Incidents", icon: Activity, label: "Incidents", path: "/incidents/IN-MH-2026" },
-              { id: "Vessels", icon: Ship, label: "Vessels", path: "/vessels" },
-              { id: "Analysis", icon: BarChart3, label: "Analysis", path: "/analysis" },
-              { id: "Settings", icon: Settings, label: "Settings", path: "/settings" },
-              { id: "Help", icon: HelpCircle, label: "Help", path: "" },
+              { id: "Dashboard", icon: Home, labelKey: "nav.home", fallback: "Home", path: "/dashboard" },
+              { id: "Map", icon: MapIcon, labelKey: "nav.map", fallback: "Map", path: "/map" },
+              { id: "Incidents", icon: Activity, labelKey: "nav.incidents", fallback: "Incidents", path: "/incidents/IN-MH-2026" },
+              { id: "Vessels", icon: Ship, labelKey: "nav.vessels", fallback: "Vessels", path: "/vessels" },
+              { id: "Analysis", icon: BarChart3, labelKey: "nav.analysis", fallback: "Analysis", path: "/analysis" },
+              { id: "Authority", icon: Send, labelKey: "nav.authority", fallback: "Submit to Authority", path: "/authority" },
+              { id: "Settings", icon: Settings, labelKey: "nav.settings", fallback: "Settings", path: "/settings" },
+              { id: "Help", icon: HelpCircle, labelKey: "nav.help", fallback: "Help", path: "/help" },
             ].map((item) => {
               const Icon = item.icon;
               const isActive = activeNav === item.id;
               const isIndigoAccent = item.id === "Analysis";
+              const label = t(item.labelKey, item.fallback);
               return (
                 <button
                   key={item.id}
@@ -508,10 +495,8 @@ export const DashboardPage: React.FC = () => {
                     setActiveNav(item.id);
                     if (item.path) {
                       navigate(item.path);
-                    } else if (item.id === "Help") {
-                      triggerToast("Help & Standard Operating Procedures (SOP) Reference Guide");
                     } else if (item.id !== "Home") {
-                      triggerToast(`Switched view to: ${item.label}`);
+                      triggerToast(`Switched view to: ${label}`);
                     }
                   }}
                   className={`w-full py-2.5 rounded-xl flex flex-col items-center justify-center gap-1 transition-all cursor-pointer relative ${
@@ -523,28 +508,29 @@ export const DashboardPage: React.FC = () => {
                       ? "text-indigo-200 hover:text-white hover:bg-[#6366F1]/20"
                       : "text-slate-300 hover:text-white hover:bg-white/10"
                   }`}
-                  title={item.label}
+                  title={label}
                 >
                   <Icon className="w-5 h-5 stroke-[1.8]" />
-                  <span className="text-[10px] font-body font-medium tracking-normal">{item.label}</span>
+                  <span className="text-[10px] font-body font-medium tracking-normal truncate max-w-[56px]">{label}</span>
                 </button>
               );
             })}
           </div>
 
           <div
-            className={`px-1 text-center transition-opacity duration-200 ${
+            className={`px-1 text-center transition-opacity duration-200 flex flex-col items-center ${
               isSidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"
             }`}
           >
-            <div className="w-6 h-6 mx-auto mb-1 text-sky-400 opacity-60">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M2 12c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" />
-                <path d="M2 17c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" opacity="0.5" />
-              </svg>
+            <div 
+              onClick={() => triggerToast("Sahayya Maritime Domain Awareness")}
+              className="w-10 h-10 mx-auto mb-1.5 rounded-full p-1 bg-white/10 backdrop-blur-md border border-white/20 shadow-md flex items-center justify-center transition-transform hover:scale-110 cursor-pointer"
+              title="Sahayya Maritime Intelligence"
+            >
+              <img src="/sahayya-logo.png" alt="Sahayya" className="w-full h-full object-contain" />
             </div>
-            <p className="text-[9px] font-body text-slate-400 leading-tight">
-              Safer Oceans.<br />Stronger Tomorrow.
+            <p className="text-[9px] font-body text-slate-300 font-medium leading-tight">
+              {t("brand.slogan", "Safer Oceans. Stronger Tomorrow.")}
             </p>
           </div>
         </aside>
@@ -1287,6 +1273,53 @@ export const DashboardPage: React.FC = () => {
           {/* ======================================================================= */}
           {/* 6. BOTTOM ROW (3 PANELS, WHITE CARDS)                                   */}
           {/* ======================================================================= */}
+          {/* Forensic Deep-Dive Section Header with Zoom Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#1E5FBF] animate-pulse" />
+              <h2 className="text-xs font-display font-bold uppercase tracking-wider text-[#0B2545]">
+                Tactical Forensics &amp; Slick Morphometrics
+              </h2>
+              <span className="text-[10px] font-mono bg-sky-100 text-[#1E5FBF] px-2 py-0.5 rounded-full font-bold border border-sky-200">
+                Stage 12 Verified
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs">
+              <button
+                onClick={() => setForensicZoomTarget("zones")}
+                className="px-2.5 py-1 rounded-lg bg-white border border-[#E1EEF9] hover:bg-sky-50 text-slate-700 hover:text-[#1E5FBF] text-[11px] font-semibold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                title="Expand Affected Zones & Proximity Radar"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-[#0EA5B7]" />
+                <span>Zoom Zones</span>
+              </button>
+              <button
+                onClick={() => setForensicZoomTarget("evolution")}
+                className="px-2.5 py-1 rounded-lg bg-white border border-[#E1EEF9] hover:bg-sky-50 text-slate-700 hover:text-[#1E5FBF] text-[11px] font-semibold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                title="Expand OpenDrift Simulation Theatre"
+              >
+                <Clock className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                <span>Zoom Evolution</span>
+              </button>
+              <button
+                onClick={() => setForensicZoomTarget("dna")}
+                className="px-2.5 py-1 rounded-lg bg-white border border-[#E1EEF9] hover:bg-sky-50 text-slate-700 hover:text-[#6366F1] text-[11px] font-semibold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                title="Expand 3D Spill DNA Studio"
+              >
+                <Activity className="w-3.5 h-3.5 text-[#6366F1]" />
+                <span>Zoom Spill DNA</span>
+              </button>
+              <button
+                onClick={() => setForensicZoomTarget("all")}
+                className="px-3 py-1 rounded-lg bg-[#0B2545] hover:bg-[#123A66] text-white text-[11px] font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                title="Open Multi-View Zoom Inspector"
+              >
+                <Maximize2 className="w-3.5 h-3.5 text-sky-400" />
+                <span>Expand All (Full HD)</span>
+              </button>
+            </div>
+          </div>
+
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             
             {/* PANEL 1: Affected Zones (Proximity Analysis) */}
@@ -1299,10 +1332,22 @@ export const DashboardPage: React.FC = () => {
                       Affected Zones (Proximity Analysis)
                     </h3>
                   </div>
+                  <button
+                    onClick={() => setForensicZoomTarget("zones")}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-[#1E5FBF] border border-sky-200/80 text-[11px] font-semibold transition-colors cursor-pointer group"
+                    title="Expand & Zoom Proximity GIS Radar"
+                  >
+                    <Maximize2 className="w-3 h-3 group-hover:scale-110 transition-transform" />
+                    <span>Expand View</span>
+                  </button>
                 </div>
 
                 <div className="mt-3 space-y-2.5">
-                  <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
+                  <div
+                    onClick={() => setForensicZoomTarget("zones")}
+                    className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between hover:border-[#1E5FBF]/40 transition-colors cursor-pointer"
+                    title="Click to zoom coastline proximity analysis"
+                  >
                     <div className="flex items-center gap-2.5">
                       <Anchor className="w-4 h-4 text-amber-500" />
                       <div>
@@ -1315,7 +1360,11 @@ export const DashboardPage: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
+                  <div
+                    onClick={() => setForensicZoomTarget("zones")}
+                    className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between hover:border-[#1E5FBF]/40 transition-colors cursor-pointer"
+                    title="Click to zoom Marine Protected Area impact"
+                  >
                     <div className="flex items-center gap-2.5">
                       <Shield className="w-4 h-4 text-[#0EA5B7]" />
                       <div>
@@ -1328,7 +1377,11 @@ export const DashboardPage: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between">
+                  <div
+                    onClick={() => setForensicZoomTarget("zones")}
+                    className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between hover:border-[#1E5FBF]/40 transition-colors cursor-pointer"
+                    title="Click to zoom fishing nursery threat"
+                  >
                     <div className="flex items-center gap-2.5">
                       <Fish className="w-4 h-4 text-emerald-500" />
                       <div>
@@ -1343,9 +1396,19 @@ export const DashboardPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="mt-3 pt-2.5 border-t border-[#E1EEF9] flex justify-end">
+              <div className="mt-3 pt-2.5 border-t border-[#E1EEF9] flex items-center justify-between">
                 <button
-                  onClick={() => triggerToast("Highlighting Coastline, MPA, and Fishing corridors on tactical map.")}
+                  onClick={() => setForensicZoomTarget("zones")}
+                  className="text-xs font-semibold text-slate-600 hover:text-[#1E5FBF] flex items-center gap-1 cursor-pointer"
+                >
+                  <ZoomIn className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                  <span>Zoom Analysis</span>
+                </button>
+                <button
+                  onClick={() => {
+                    triggerToast("Highlighting Coastline, MPA, and Fishing corridors on tactical map.");
+                    setForensicZoomTarget("zones");
+                  }}
                   className="btn-text text-xs font-body font-semibold text-[#1E5FBF] hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   <span>View on Map</span>
@@ -1364,9 +1427,19 @@ export const DashboardPage: React.FC = () => {
                       Slick Evolution (Hindcast &amp; Forecast)
                     </h3>
                   </div>
-                  <span className="text-[10px] font-mono text-slate-500 font-medium">
-                    Step: {activeTimelineFrame.label}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-slate-500 font-medium">
+                      Step: {activeTimelineFrame.label}
+                    </span>
+                    <button
+                      onClick={() => setForensicZoomTarget("evolution")}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-[#1E5FBF] border border-sky-200/80 text-[11px] font-semibold transition-colors cursor-pointer group"
+                      title="Expand & Zoom OpenDrift Simulation"
+                    >
+                      <Maximize2 className="w-3 h-3 group-hover:scale-110 transition-transform" />
+                      <span>Expand</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* 7 Thumbnail Frames */}
@@ -1458,7 +1531,11 @@ export const DashboardPage: React.FC = () => {
                 </div>
 
                 {/* Interactive OpenDrift Trajectory Simulation Display */}
-                <div className="mt-3 h-32 rounded-xl bg-[#061220] border border-[#172E4D] relative overflow-hidden shadow-inner flex flex-col justify-between p-2.5">
+                <div
+                  onClick={() => setForensicZoomTarget("evolution")}
+                  className="mt-3 h-32 rounded-xl bg-[#061220] border border-[#172E4D] hover:border-[#1E5FBF] transition-colors relative overflow-hidden shadow-inner flex flex-col justify-between p-2.5 cursor-pointer group"
+                  title="Click to Expand Full OpenDrift Simulation Theatre"
+                >
                   {/* Background Hydrodynamic Map Graphic */}
                   <img
                     src="/opendrift-trajectory-simulation.jpg"
@@ -1570,18 +1647,24 @@ export const DashboardPage: React.FC = () => {
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                       <span>INCOIS CURRENT: 0.82 kts @ 068° &bull; WIND: 14.2 kts WSW</span>
                     </div>
-                    <div className={`px-2 py-0.5 rounded border text-[9px] font-bold ${
-                      activeTimelineIndex === 2
-                        ? "bg-rose-950/80 border-rose-500/60 text-rose-300"
-                        : activeTimelineIndex < 2
-                        ? "bg-amber-950/80 border-amber-500/60 text-amber-300"
-                        : "bg-sky-950/80 border-sky-500/60 text-sky-300"
-                    }`}>
-                      {activeTimelineIndex === 2
-                        ? "SENTINEL-1A SAR TRUTH (T-0)"
-                        : activeTimelineIndex < 2
-                        ? `HINDCAST ORIGIN (${activeTimelineFrame.label})`
-                        : `OPENDRIFT FORECAST (${activeTimelineFrame.label})`}
+                    <div className="flex items-center gap-1.5">
+                      <div className={`px-2 py-0.5 rounded border text-[9px] font-bold ${
+                        activeTimelineIndex === 2
+                          ? "bg-rose-950/80 border-rose-500/60 text-rose-300"
+                          : activeTimelineIndex < 2
+                          ? "bg-amber-950/80 border-amber-500/60 text-amber-300"
+                          : "bg-sky-950/80 border-sky-500/60 text-sky-300"
+                      }`}>
+                        {activeTimelineIndex === 2
+                          ? "SENTINEL-1A SAR TRUTH (T-0)"
+                          : activeTimelineIndex < 2
+                          ? `HINDCAST ORIGIN (${activeTimelineFrame.label})`
+                          : `OPENDRIFT FORECAST (${activeTimelineFrame.label})`}
+                      </div>
+                      <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-950/80 border border-sky-500/40 text-sky-300 text-[8.5px] font-mono group-hover:bg-[#1E5FBF] group-hover:text-white transition-colors">
+                        <Maximize2 className="w-2.5 h-2.5" />
+                        <span>Zoom</span>
+                      </span>
                     </div>
                   </div>
 
@@ -1649,12 +1732,22 @@ export const DashboardPage: React.FC = () => {
                       Spill DNA &mdash; Geometry &amp; Fingerprint
                     </h3>
                   </div>
-                  <button
-                    onClick={() => triggerToast("Spill DNA: Heavy Arabian crude signature.")}
-                    className="text-[11px] font-body font-semibold text-[#1E5FBF] hover:underline cursor-pointer"
-                  >
-                    View Details &rarr;
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setForensicZoomTarget("dna")}
+                      className="text-[11px] font-body font-semibold text-[#1E5FBF] hover:underline cursor-pointer"
+                    >
+                      View Details &rarr;
+                    </button>
+                    <button
+                      onClick={() => setForensicZoomTarget("dna")}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-[#6366F1] border border-indigo-200/80 text-[11px] font-semibold transition-colors cursor-pointer group"
+                      title="Expand & Zoom 3D Spill DNA Lab"
+                    >
+                      <Maximize2 className="w-3 h-3 group-hover:scale-110 transition-transform" />
+                      <span>Expand</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* 6 Stats Grid */}
@@ -1828,7 +1921,7 @@ export const DashboardPage: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Sub-Switch: SAR vs 3D Terrain */}
+                      {/* Sub-Switch: SAR vs 3D Terrain + Zoom Expand Button */}
                       <div className="absolute top-2 right-2 flex items-center gap-0.5 bg-black/70 backdrop-blur-xs p-0.5 rounded-lg border border-white/10 z-10">
                         <button
                           onClick={(e) => {
@@ -1855,6 +1948,17 @@ export const DashboardPage: React.FC = () => {
                           }`}
                         >
                           3D Mesh
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setForensicZoomTarget("dna");
+                          }}
+                          className="px-1.5 py-0.5 rounded text-[9px] font-mono text-indigo-300 hover:text-white hover:bg-indigo-600 transition-colors flex items-center gap-0.5"
+                          title="Zoom 3D Forensic Studio"
+                        >
+                          <Maximize2 className="w-2.5 h-2.5" />
+                          <span className="hidden sm:inline">Zoom</span>
                         </button>
                       </div>
                     </div>
@@ -2006,7 +2110,7 @@ export const DashboardPage: React.FC = () => {
           {/* ======================================================================= */}
           <footer className="pt-4 pb-2 border-t border-[#DCEEFC] flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-500 font-medium">
             <div>
-              &copy; 2026 SAHAYYA &nbsp;|&nbsp; Ministry of Defence, Government of India
+              &copy; 2026 SAHAYYA &nbsp;|&nbsp; Maritime Defense &amp; Environmental Forensics
             </div>
 
             <div className="flex items-center gap-3">
@@ -2014,7 +2118,7 @@ export const DashboardPage: React.FC = () => {
                 onClick={() =>
                   setFooterModalContent({
                     title: "Terms of Use",
-                    body: "The Sahayya Marine Incident Command System is designated for authorized maritime security, port operations, and marine environmental defense personnel under the Government of India Ministry of Defence.",
+                    body: "The Sahayya Marine Incident Command System is designated for authorized maritime security, port operations, and marine environmental defense personnel.",
                   })
                 }
                 className="hover:text-[#0B2545] cursor-pointer"
@@ -2430,12 +2534,21 @@ export const DashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* Official 9-Page PDF Report Generation Modal */}
+      {/* Official Executive Overview PDF Report Modal */}
       <ReportGenerationModal
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
+        stage="dashboard"
         incidentIdOrCode="IN-MH-2026"
-        incidentTitle="Mumbai High Offshore Oil Slick"
+        incidentTitle="Indian EEZ Maritime Surveillance Executive Overview"
+      />
+
+      {/* Forensic Deep-Dive High-Resolution Zoom Modal */}
+      <ForensicZoomModal
+        isOpen={forensicZoomTarget !== null}
+        initialTab={forensicZoomTarget || "zones"}
+        onClose={() => setForensicZoomTarget(null)}
+        onExportReport={() => setShowReportModal(true)}
       />
     </div>
   );

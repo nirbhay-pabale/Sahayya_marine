@@ -17,6 +17,8 @@ import sahayyaSocket from "../services/socket";
 import { VesselsMap } from "../components/VesselsMap";
 import { EvidenceGraphModal } from "../components/EvidenceGraphModal";
 import { ReportGenerationModal } from "../components/ReportGenerationModal";
+import { useLanguage } from "../context/LanguageContext";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import {
   Home,
   Activity,
@@ -64,6 +66,7 @@ import {
 export const VesselsPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { t } = useLanguage();
 
   // Layout states
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -504,58 +507,27 @@ export const VesselsPage: React.FC = () => {
             </div>
           </button>
 
-          {/* Government of India Emblem */}
-          <div className="flex items-center gap-2.5 pr-4 border-r border-[#E1EEF9]">
-            <div className="w-8 h-8 flex items-center justify-center text-slate-700 shrink-0">
-              <svg className="w-7 h-7" viewBox="0 0 24 24" fill="currentColor">
-                <path
-                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 2c4.41 0 8 3.59 8 8s-3.59 8-8 8-8-3.59-8-8 3.59-8 8-8zm-1 3v4h2V7h-2zm0 6v4h2v-4h-2z"
-                  opacity="0.2"
-                />
-                <path d="M12 3.5l1.5 3h3.5l-2.8 2.2 1 3.5-3.2-2.1-3.2 2.1 1-3.5-2.8-2.2h3.5z" />
-                <path d="M7 16h10v2H7zm2 3h6v1.5H9z" />
-              </svg>
-            </div>
-            <div className="hidden sm:block leading-tight font-body">
-              <div className="text-[11px] font-semibold tracking-wide text-[#0B2545] uppercase">
-                Ministry of Defence
-              </div>
-              <div className="text-[10px] text-slate-500 font-normal">Government of India</div>
-            </div>
-          </div>
-
-          {/* Sahayya Logo & Brand */}
+          {/* Sahayya Official Logo & Brand */}
           <div
             onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-3 cursor-pointer"
+            className="flex items-center gap-3 cursor-pointer group select-none"
           >
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-white to-sky-100 flex items-center justify-center shadow-md border border-[#E1EEF9] shrink-0">
-              <svg className="w-6 h-6" viewBox="0 0 44 44" fill="none">
-                <path
-                  d="M10 24C10 18.4772 14.4772 14 20 14C24.4183 14 28.1634 16.8579 29.4721 20.8579C30.7808 24.8579 34.5259 27.7157 38.9443 27.7157"
-                  stroke="#185ADB"
-                  strokeWidth="4"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M5.05572 16.2843C9.47413 16.2843 13.2192 19.1421 14.5279 23.1421C15.8366 27.1421 19.5817 30 24 30C29.5228 30 34 25.5228 34 20"
-                  stroke="#06B6D4"
-                  strokeWidth="4"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>
+            <img 
+              src="/sahayya-logo.png" 
+              alt="Sahayya Logo" 
+              className="h-11 w-auto object-contain transition-transform duration-200 group-hover:scale-105 drop-shadow-sm" 
+            />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-display text-lg font-bold tracking-[0.16em] text-[#0B2545]">
-                  SAHAYYA
+                <span className="font-display text-lg sm:text-xl font-bold tracking-[0.14em] text-[#0B2545] leading-none">
+                  {t("brand.name", "SAHAYYA")}
                 </span>
-                <span className="bg-emerald-100 text-emerald-700 border border-emerald-300 text-[9px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wider font-body">
-                  BETA
+                <span className="bg-sky-100 text-[#1E5FBF] border border-sky-300/60 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider font-body">
+                  VESSEL REGISTRY
                 </span>
               </div>
-              <p className="text-[10px] text-slate-500 hidden md:block font-body">
-                Maritime Oil Spill Intelligence &amp; Vessel Attribution
+              <p className="text-[10px] sm:text-[10.5px] text-slate-500 font-medium font-body mt-0.5 hidden md:block">
+                {t("brand.tagline", "Maritime Oil Spill Intelligence & Vessel Attribution")}
               </p>
             </div>
           </div>
@@ -569,7 +541,7 @@ export const VesselsPage: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search vessel (IMO, name), location or coordinates..."
+              placeholder={t("action.search", "Search vessel (IMO, name), location or coordinates...")}
               className="w-full pl-9 pr-12 py-1.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-[#1E5FBF] focus:bg-white focus:ring-1 focus:ring-[#1E5FBF] transition-all font-body"
             />
             <span className="absolute right-2.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-white border border-[#E1EEF9] text-slate-500 pointer-events-none">
@@ -578,8 +550,11 @@ export const VesselsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Right: Date/Time + Status + Bell + User */}
+        {/* Right: Date/Time + LanguageSwitcher + Status + Bell + User */}
         <div className="flex items-center gap-3">
+          {/* Multi-Language Selector */}
+          <LanguageSwitcher variant="light" />
+
           <div className="hidden xl:block text-right leading-tight">
             <div className="text-xs font-semibold text-[#0B2545] font-mono">12 Sep 2026 17:55 UTC</div>
             <div className="text-[10px] text-slate-400 font-mono">(Local: 23:25 IST)</div>
@@ -587,7 +562,7 @@ export const VesselsPage: React.FC = () => {
 
           <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 text-xs font-semibold font-body">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Systems Operational</span>
+            <span>{t("status.operational", "Systems Operational")}</span>
           </div>
 
           {/* Bell */}
@@ -614,15 +589,13 @@ export const VesselsPage: React.FC = () => {
                     alt={user.name || "Officer"}
                     className="w-full h-full object-cover"
                   />
-                ) : user?.name ? (
-                  user.name.slice(0, 2).toUpperCase()
                 ) : (
-                  "SK"
+                  user?.name ? (user.name.trim().split(" ").length === 1 ? user.name.trim().slice(0, 2).toUpperCase() : (user.name.trim().split(" ")[0][0] + user.name.trim().split(" ")[user.name.trim().split(" ").length - 1][0]).toUpperCase()) : "OF"
                 )}
               </div>
               <div className="hidden sm:block text-left leading-tight">
                 <div className="text-xs font-bold text-[#0B2545]">
-                  {user?.name || "S. Kumar"}
+                  {user?.name || "Officer"}
                 </div>
                 <div className="text-[10px] text-slate-500">{user?.role || "Coast Guard"}</div>
               </div>
@@ -632,8 +605,8 @@ export const VesselsPage: React.FC = () => {
             {showUserMenu && (
               <div className="absolute right-0 mt-2 w-48 bg-white border border-[#E1EEF9] rounded-2xl shadow-[0_10px_30px_rgba(30,95,191,0.15)] p-2 z-50 animate-fadeIn">
                 <div className="px-3 py-2 border-b border-slate-100 text-xs">
-                  <div className="font-bold text-[#0B2545]">{user?.name || "S. Kumar"}</div>
-                  <div className="text-[10px] text-slate-400">{user?.role || "Commander (West Command)"}</div>
+                  <div className="font-bold text-[#0B2545]">{user?.name || "Officer"}</div>
+                  <div className="text-[10px] text-slate-400">{user?.email || "officer@indiancoastguard.gov.in"}</div>
                 </div>
                 <button
                   onClick={() => {
@@ -642,7 +615,7 @@ export const VesselsPage: React.FC = () => {
                   }}
                   className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-xs text-slate-700 flex items-center gap-2 cursor-pointer mt-1"
                 >
-                  <span>Profile & Settings</span>
+                  <span>{t("nav.settings", "Profile & Settings")}</span>
                 </button>
                 <button
                   onClick={() => {
@@ -652,7 +625,7 @@ export const VesselsPage: React.FC = () => {
                   className="w-full text-left px-3 py-2 rounded-lg hover:bg-rose-50 text-xs text-rose-600 flex items-center gap-2 cursor-pointer font-semibold"
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>Logout</span>
+                  <span>{t("nav.signOut", "Logout")}</span>
                 </button>
               </div>
             )}
@@ -678,17 +651,19 @@ export const VesselsPage: React.FC = () => {
             }`}
           >
             {[
-              { id: "Dashboard", label: "Home", icon: Home, route: "/dashboard" },
-              { id: "Map", label: "Map", icon: MapIcon, route: "/map" },
-              { id: "Incidents", label: "Incidents", icon: Activity, route: "/incidents/IN-MH-2026" },
-              { id: "Vessels", label: "Vessels", icon: Ship, route: "/vessels" },
-              { id: "Analysis", label: "Analysis", icon: BarChart3, route: "/analysis" },
-              { id: "Settings", label: "Settings", icon: Settings, route: "/settings" },
-              { id: "Help", label: "Help", icon: HelpCircle, route: "" },
+              { id: "Dashboard", labelKey: "nav.home", fallback: "Home", icon: Home, route: "/dashboard" },
+              { id: "Map", labelKey: "nav.map", fallback: "Map", icon: MapIcon, route: "/map" },
+              { id: "Incidents", labelKey: "nav.incidents", fallback: "Incidents", icon: Activity, route: "/incidents/IN-MH-2026" },
+              { id: "Vessels", labelKey: "nav.vessels", fallback: "Vessels", icon: Ship, route: "/vessels" },
+              { id: "Analysis", labelKey: "nav.analysis", fallback: "Analysis", icon: BarChart3, route: "/analysis" },
+              { id: "Authority", labelKey: "nav.authority", fallback: "Submit to Authority", icon: Send, route: "/authority" },
+              { id: "Settings", labelKey: "nav.settings", fallback: "Settings", icon: Settings, route: "/settings" },
+              { id: "Help", labelKey: "nav.help", fallback: "Help", icon: HelpCircle, route: "/help" },
             ].map((item) => {
               const Icon = item.icon;
               const isActive = activeNav === item.id;
               const isIndigoAccent = item.id === "Analysis";
+              const label = t(item.labelKey, item.fallback);
 
               return (
                 <button
@@ -709,24 +684,25 @@ export const VesselsPage: React.FC = () => {
                       ? "text-indigo-200 hover:text-white hover:bg-[#6366F1]/20"
                       : "text-slate-300 hover:text-white hover:bg-white/10"
                   }`}
-                  title={item.label}
+                  title={label}
                 >
                   <Icon className="w-5 h-5 stroke-[1.8]" />
-                  <span className="text-[9px] font-medium tracking-tight font-body">{item.label}</span>
+                  <span className="text-[9px] font-medium tracking-tight font-body truncate max-w-[50px]">{label}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="px-1 text-center font-body">
-            <div className="w-6 h-6 mx-auto mb-1 text-sky-400 opacity-60">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M2 12c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" />
-                <path d="M2 17c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" opacity="0.5" />
-              </svg>
+          <div className="px-1 text-center font-body flex flex-col items-center">
+            <div 
+              onClick={() => navigate("/dashboard")}
+              className="w-10 h-10 mx-auto mb-1.5 rounded-full p-1 bg-white/10 backdrop-blur-md border border-white/20 shadow-md flex items-center justify-center transition-transform hover:scale-110 cursor-pointer"
+              title="Sahayya Maritime Intelligence"
+            >
+              <img src="/sahayya-logo.png" alt="Sahayya" className="w-full h-full object-contain" />
             </div>
-            <p className="text-[8px] text-slate-400 leading-tight">
-              Safer Oceans.<br />Stronger Tomorrow.
+            <p className="text-[8.5px] text-slate-300 font-medium leading-tight">
+              {t("brand.slogan", "Safer Oceans. Stronger Tomorrow.")}
             </p>
           </div>
         </aside>
@@ -1951,7 +1927,7 @@ export const VesselsPage: React.FC = () => {
             {/* ================================================================= */}
             <footer className="pt-4 pb-2 border-t border-[#DCEEFC] flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-500 font-medium">
               <div>
-                &copy; 2026 SAHAYYA &nbsp;|&nbsp; Ministry of Defence, Government of India
+                &copy; 2026 SAHAYYA &nbsp;|&nbsp; Maritime Defense &amp; Environmental Forensics
               </div>
               <div className="flex items-center gap-4">
                 <button onClick={() => triggerToast("Terms of Use: Authorized Maritime Defense Only")} className="hover:text-slate-800 cursor-pointer">
@@ -1995,8 +1971,9 @@ export const VesselsPage: React.FC = () => {
       <ReportGenerationModal
         isOpen={showGenerateReportModal}
         onClose={() => setShowGenerateReportModal(false)}
-        incidentTitle="Indian EEZ Fleet Surveillance Domain"
-        isFleetReport={true}
+        stage="vessels"
+        incidentIdOrCode="EEZ-FLT-2026"
+        incidentTitle="Indian EEZ Vessel Intelligence & Attribution Dossier"
       />
 
       {/* Coast Guard Asset Contact / Dispatch Modal */}

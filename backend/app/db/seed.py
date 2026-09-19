@@ -130,7 +130,7 @@ async def seed_database():
             ("ICGS Rajdoot", "fast_patrol_vessel", 72.82, 18.91, "operational"),
             ("ICGS C-438", "interceptor_boat", 72.78, 18.85, "operational"),
             ("Dornier CG-782", "patrol_aircraft", 72.50, 18.78, "on_mission"),
-            ("ICGS Varaha", "offshore_patrol_vessel", 70.15, 22.95, "operational"),
+            ("ICGS Varaha", "offshore_patrol_vessel", 69.60, 22.60, "operational"),
             ("ICGS Vajra", "offshore_patrol_vessel", 80.35, 13.20, "operational"),
         ]
         for name, atype, lon, lat, status in cg_assets_data:
@@ -156,7 +156,7 @@ async def seed_database():
             ('MT Kaveri Spirit', 'tanker', 'India', 2020, '9898765', '419000456', 75.80, 9.86, 11.8, 190.0),
             # Bulk Carriers (6)
             ('MV Iron Baron', 'bulk_carrier', 'Panama', 2011, '9512345', '354000111', 72.42, 18.72, 12.8, 38.0),
-            ('MV Gujarat Glory', 'bulk_carrier', 'India', 2017, '9754321', '419000789', 69.10, 21.40, 12.2, 160.0),
+            ('MV Gujarat Glory', 'bulk_carrier', 'India', 2017, '9754321', '419000789', 69.58, 22.56, 12.2, 75.0),
             ('MV Deccan Miner', 'bulk_carrier', 'Malta', 2013, '9623456', '248000222', 72.35, 18.35, 11.8, 145.0),
             ('MV Baltic Carrier', 'bulk_carrier', 'Liberia', 2015, '9712345', '636000333', 71.85, 18.15, 12.4, 210.0),
             ('MV Cape Horizon', 'bulk_carrier', 'Singapore', 2020, '9901234', '563000444', 71.25, 19.45, 14.0, 330.0),
@@ -414,7 +414,7 @@ async def seed_database():
             ("Lagrangian backward drift simulation completed. Origin release window established.", "done", mh_time + timedelta(hours=2)),
             ("Vessel Attribution Engine identified MT Pacific Voyager as prime suspect (98.8% match).", "done", mh_time + timedelta(hours=3)),
             ("ICGS Vikram on scene deployed containment boom in Sector Alpha.", "done", mh_time + timedelta(hours=6)),
-            ("Forensic Evidence Package exported for Ministry of Defense & DG Shipping.", "in_progress", now - timedelta(hours=1)),
+            ("Forensic Evidence Package exported for Maritime Command & DG Shipping.", "in_progress", now - timedelta(hours=1)),
         ]
         for txt, st, tm in mh_logs:
             session.add(ActivityLog(incident_id=inc_mh.id, event_text=txt, status=st, occurred_at=tm))
@@ -430,7 +430,7 @@ async def seed_database():
             severity_score=6.2,
             spill_area_km2=64.8,
             detected_at=kd_time,
-            location={"type": "Point", "coordinates": [69.85, 22.95]},
+            location={"type": "Point", "coordinates": [69.55, 22.58]},
             region_name="Gulf of Kutch / Gujarat",
             description="Medium fuel oil discharge observed along bulk carrier navigational fairway into Kandla anchorage.",
             detection_source="RISAT-1A Radar",
@@ -439,7 +439,7 @@ async def seed_database():
         session.add(inc_kd)
         await session.flush()
 
-        poly_kd = generate_blob_polygon(69.85, 22.95, major_deg=0.10, minor_deg=0.04, rotation_deg=65.0, seed=201)
+        poly_kd = generate_blob_polygon(69.55, 22.58, major_deg=0.10, minor_deg=0.04, rotation_deg=65.0, seed=201)
         session.add(SpillGeometry(incident_id=inc_kd.id, geometry=poly_kd, captured_at=kd_time, source="RISAT-1A SAR", confidence_score=0.91))
         session.add(SpillDNA(
             incident_id=inc_kd.id, area_km2=64.8, perimeter_km=42.0, length_major_km=18.4, width_minor_km=5.2,
@@ -448,8 +448,8 @@ async def seed_database():
         ))
         session.add(OriginZone(
             incident_id=inc_kd.id,
-            zone_geometry=generate_blob_polygon(69.76, 22.90, major_deg=0.05, minor_deg=0.03, rotation_deg=60.0, seed=202),
-            center_point={"type": "Point", "coordinates": [69.76, 22.90]},
+            zone_geometry=generate_blob_polygon(69.45, 22.52, major_deg=0.05, minor_deg=0.03, rotation_deg=60.0, seed=202),
+            center_point={"type": "Point", "coordinates": [69.45, 22.52]},
             release_window_start=kd_time - timedelta(hours=8), release_window_end=kd_time - timedelta(hours=4),
             confidence_pct=88.5, model_used="OpenDrift Hindcast v2.4"
         ))
@@ -459,7 +459,7 @@ async def seed_database():
             fishing_zone_overlap_km2=18.1, risk_level="CRITICAL"
         ))
         session.add(VesselAttribution(
-            incident_id=inc_kd.id, vessel_id=fleet_vessels[24].id, rank=1, attribution_pct=89.4,
+            incident_id=inc_kd.id, vessel_id=fleet_vessels[9].id, rank=1, attribution_pct=89.4,
             cpa_km=1.8, min_sog_kts=3.4, ais_gap_minutes=60, time_match_pct=92.0, location_match_pct=91.5,
             route_match_pct=88.0, ais_consistency_pct=78.0, physics_match_pct=89.0, overall_evidence_pct=89.4,
             verdict="highly_consistent"

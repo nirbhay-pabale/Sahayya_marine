@@ -46,25 +46,61 @@ import {
   Target,
   FileCheck,
   Cpu,
+  Waves,
+  ShieldAlert,
+  Flame,
+  CheckSquare,
+  FileCode,
+  Zap,
+  ArrowRight,
+  Filter,
+  Layers2,
+  Database,
+  Wifi,
+  Navigation,
+  Globe,
+  SlidersHorizontal,
+  MapPin,
+  Leaf,
+  DollarSign,
+  TrendingUp,
+  Trees,
+  Fish,
+  IndianRupee,
+  Landmark,
+  Building2,
+  PieChart,
+  Send,
 } from "lucide-react";
 import {
+  ResponsiveContainer,
   BarChart,
   Bar,
   XAxis,
   YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
+  Tooltip as RechartsTooltip,
+  CartesianGrid,
   LineChart,
   Line,
-  CartesianGrid,
-  ReferenceLine,
+  AreaChart,
+  Area,
+  RadarChart,
+  Radar,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
   Legend,
+  Cell,
 } from "recharts";
 import { INCIDENT_DATA, VesselCandidate } from "../data/incidentData";
 import { HISTORICAL_INCIDENTS, HistoricalIncident } from "../data/historicalIncidents";
+import { IncidentMiniMap, MapVesselCandidate, MapCoastGuardAsset } from "../components/IncidentMiniMap";
+import { AdvancedSpillMap } from "../components/AdvancedSpillMap";
+import { simulateOilSpillHydrodynamics, OriginProbabilityZone, OriginEvidenceItem } from "../utils/spillHydrodynamics";
 import { ReportGenerationModal } from "../components/ReportGenerationModal";
-import { generateClientEvidenceBriefPdf } from "../services/evidencePdfGenerator";
+import { StageReportType } from "../services/stageReportPdfGenerator";
+import { useLanguage } from "../context/LanguageContext";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import sahayyaApi from "../services/api";
 
 // ----------------------------------------------------------------------------
@@ -77,158 +113,406 @@ export const VESSEL_COLORS: Record<string, { primary: string; light: string; bad
   "vessel-4": { primary: "#059669", light: "#D1FAE5", badge: "bg-emerald-100 text-emerald-700 border-emerald-200", border: "#059669" }, // Sagar Shakti
 };
 
-// Contradicting forensic explanations for candidate vessels
-export const CANDIDATE_FORENSIC_EXPLANATIONS: Record<string, { verdict: string; summary: string; ruledOutPoints: string[] }> = {
-  "vessel-1": {
-    verdict: "ATTRIBUTED SUSPECT (Rank #1)",
-    summary: "Drastic speed drop from 13.8 to 1.4 kts correlates directly with 94 min transponder blackout along central slick centroid.",
-    ruledOutPoints: [
-      "94-min AIS blackout right across origin coordinates (18.78°N, 72.51°E)",
-      "Kinematic speed reduction to 1.4 kts (discharge maneuvering speed)",
-      "Reverse hydrodynamic particle stream achieves 99.4% spatial IoU convergence",
-    ],
-  },
-  "vessel-2": {
-    verdict: "RULED OUT (Rank #2 - 43.5% Match)",
-    summary: "Maintained continuous high cruising speed (14.8 kts) along international transit lane with zero transponder interruption.",
-    ruledOutPoints: [
-      "Divergent course (148° SE) with CPA offset of 41.2 km from slick centroid",
-      "Continuous AIS broadcast (0 min gap) verifies steady passage without stoppage",
-      "Lagrangian reverse particle stream misses vessel track by > 38 km",
-    ],
-  },
-  "vessel-3": {
-    verdict: "RULED OUT (Rank #3 - 43.5% Match)",
-    summary: "Transited south-bound along peripheral hindcast boundary; 12-min transponder latency coincided with convective storm squall.",
-    ruledOutPoints: [
-      "Peripheral track 39.8 km west of core hydrocarbon emulsion footprint",
-      "Maintained constant 11.2 kts transit speed during 12-min squall latency",
-      "Discharge physics model shows negative buoyancy match for crude oil wash",
-    ],
-  },
-  "vessel-4": {
-    verdict: "RULED OUT (Rank #4 - 13.9% Match)",
-    summary: "Dedicated offshore supply vessel operating within ONGC oilfield concession under continuous coastal VTS radar lock.",
-    ruledOutPoints: [
-      "Operating 54.1 km NE of discharge origin within licensed oilfield sector",
-      "Course 045° directly opposite to INCOIS surface advection vector (068° / 245°)",
-      "Vessel fuel log and operational profile refute heavy crude cargo carriage",
-    ],
-  },
-};
-
-// Look-Alike Rejection Artifacts dataset
-export interface LookAlikeArtifact {
-  id: string;
-  title: string;
-  category: string;
-  badge: string;
-  badgeColor: string;
-  confidence: number;
-  reason: string;
-  sarAnalysis: {
-    polarizationRatio: string;
-    windThreshold: string;
-    textureWavenumber: string;
-    rejectionConfidence: string;
-  };
-  explanation: string;
+export interface SatellitePassRecord {
+  pass: string;
+  actual: number;
+  benchmark: number;
+  sensor: string;
+  date: string;
+  windSpeed: string;
+  polarization: string;
+  dampingDb: string;
+  areaKm2: number;
+  incidenceAngle: string;
+  resolution: string;
+  rejectionStatus: string;
+  backscatterContrast: string;
 }
 
-export const LOOK_ALIKE_ARTIFACTS: LookAlikeArtifact[] = [
+export const SATELLITE_ACCURACY_TREND: SatellitePassRecord[] = [
   {
-    id: "artifact-1",
-    title: "Low-Wind Calm Ocean (Wind < 2.5 m/s)",
-    category: "Atmospheric Null",
-    badge: "Rejected (Non-Hazard)",
-    badgeColor: "bg-blue-50 text-blue-700 border-blue-200",
-    confidence: 99.4,
-    reason: "Specular radar reflection causes uniform low backscatter (dark patch); rejected using ERA5 10m wind threshold.",
-    sarAnalysis: {
-      polarizationRatio: "VV/VH Cross-Ratio: 0.88 (Isotropic)",
-      windThreshold: "ERA5 Surface Wind: 1.8 m/s (Below 2.5 m/s threshold)",
-      textureWavenumber: "Fourier High-Freq Energy: Null (Glassy surface)",
-      rejectionConfidence: "99.4% Certainty (Non-Hydrocarbon)",
-    },
-    explanation: "Under ultra-calm sea states (wind < 2.5 m/s), the ocean surface behaves as a specular mirror, reflecting radar pulses away from the satellite receiver and producing false dark patches indistinguishable from oil in single-pol SAR. Sahayya's ERA5 10m wind-field layer automatically flags and rejects these meteorological false alarms.",
+    pass: "P-14",
+    actual: 91.2,
+    benchmark: 97.4,
+    sensor: "Sentinel-1A C-SAR (IW)",
+    date: "04 Sep 2026, 06:12 UTC",
+    windSpeed: "4.8 m/s",
+    polarization: "VV + VH Dual-Pol",
+    dampingDb: "-6.4 dB",
+    areaKm2: 8.4,
+    incidenceAngle: "32.1°",
+    resolution: "10m High-Res",
+    rejectionStatus: "Non-Hazard Filters Cleared",
+    backscatterContrast: "High Contrast (Normalized σ⁰ = -24.2 dB)",
   },
   {
-    id: "artifact-2",
-    title: "Biogenic Natural Slick (Algal Bloom)",
-    category: "Biological Surfactant",
-    badge: "Rejected (Biological)",
-    badgeColor: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    confidence: 98.6,
-    reason: "Natural monomolecular surfactant layer; rejected via VV/VH dual-pol cross-polarization ratio & spatial dispersion.",
-    sarAnalysis: {
-      polarizationRatio: "VV/VH Co-Polar Ratio: 0.12 (Monomolecular thin film)",
-      windThreshold: "ERA5 Surface Wind: 4.8 m/s (Optimal radar bracket)",
-      textureWavenumber: "Spectral Damping Slope: k^-2.5 (Surfactant elasticity)",
-      rejectionConfidence: "98.6% Certainty (Organic Bloom)",
-    },
-    explanation: "Phytoplankton and algal blooms generate organic biogenic films that dampen capillary-gravity waves. However, biogenic films are strictly monomolecular (< 0.1 µm thick), producing distinct VV/VH co-polarization damping slopes compared to thick mineral crude emulsions (> 50 µm).",
+    pass: "P-15",
+    actual: 92.8,
+    benchmark: 98.1,
+    sensor: "Sentinel-1B C-SAR (IW)",
+    date: "06 Sep 2026, 18:40 UTC",
+    windSpeed: "5.4 m/s",
+    polarization: "VV + VH Dual-Pol",
+    dampingDb: "-7.1 dB",
+    areaKm2: 9.9,
+    incidenceAngle: "36.4°",
+    resolution: "10m High-Res",
+    rejectionStatus: "Non-Hazard Filters Cleared",
+    backscatterContrast: "High Contrast (Normalized σ⁰ = -25.8 dB)",
   },
   {
-    id: "artifact-3",
-    title: "Internal Gravity Waves (Solibores)",
-    category: "Oceanographic Wave Artifact",
-    badge: "Filtered (Wave Artifact)",
-    badgeColor: "bg-purple-50 text-purple-700 border-purple-200",
-    confidence: 97.9,
-    reason: "Periodic dark and bright alternating linear crest bands; filtered by 2D spatiotemporal Fourier texture filter.",
-    sarAnalysis: {
-      polarizationRatio: "VV/VH Cross-Ratio: Alternating ±4.2 dB modulation",
-      windThreshold: "Tidal Stratification: Shelf-break pycnocline active",
-      textureWavenumber: "Spatial Wavelength: λ = 850m (Solitary packet)",
-      rejectionConfidence: "97.9% Certainty (Ocean Wave Packet)",
-    },
-    explanation: "Subsurface internal waves interacting with continental shelf bathymetry produce surface convergence and divergence zones, creating alternating dark and bright linear bands. The 2D Fourier spatial wavenumber transform identifies the distinct packet periodicity (850m) and filters out the artifact.",
+    pass: "P-16",
+    actual: 90.5,
+    benchmark: 96.8,
+    sensor: "RADARSAT-2 ScanSAR",
+    date: "08 Sep 2026, 02:15 UTC",
+    windSpeed: "3.2 m/s",
+    polarization: "HH + HV Quad-Pol",
+    dampingDb: "-5.8 dB",
+    areaKm2: 11.2,
+    incidenceAngle: "28.7°",
+    resolution: "25m Wide",
+    rejectionStatus: "Low-Wind Guard Band Checked",
+    backscatterContrast: "Moderate Contrast (Normalized σ⁰ = -22.1 dB)",
   },
   {
-    id: "artifact-4",
-    title: "Rain Cell Convective Squall Downburst",
-    category: "Meteorological Damping",
-    badge: "Rejected (Rain Squall)",
-    badgeColor: "bg-amber-50 text-amber-700 border-amber-200",
-    confidence: 98.1,
-    reason: "Atmospheric rain column attenuation and ring-wave turbulence; cross-verified with INSAT-3D thermal IR brightness.",
-    sarAnalysis: {
-      polarizationRatio: "Cross-Pol Depolarization: +3.8 dB (Rain drop scattering)",
-      windThreshold: "INSAT-3D Cloud Top Temp: -58°C (Deep Convection)",
-      textureWavenumber: "Ring-Wave Turbulence: High isotropic variance",
-      rejectionConfidence: "98.1% Certainty (Tropical Squall)",
-    },
-    explanation: "Heavy tropical downpours attenuate C-band radar signals and create surface turbulence rings that dampen capillary waves. Sahayya cross-references real-time INSAT-3D cloud top brightness temperature to eliminate rain-induced radar shadows.",
+    pass: "P-17",
+    actual: 94.2,
+    benchmark: 98.4,
+    sensor: "Sentinel-1A Stripmap",
+    date: "10 Sep 2026, 05:58 UTC",
+    windSpeed: "5.0 m/s",
+    polarization: "VV + VH Dual-Pol",
+    dampingDb: "-7.6 dB",
+    areaKm2: 12.8,
+    incidenceAngle: "34.5°",
+    resolution: "5m Stripmap",
+    rejectionStatus: "Non-Hazard Filters Cleared",
+    backscatterContrast: "High Contrast (Normalized σ⁰ = -26.4 dB)",
+  },
+  {
+    pass: "P-18",
+    actual: 93.6,
+    benchmark: 98.0,
+    sensor: "RISAT-1A (EOS-04) FRS-1",
+    date: "11 Sep 2026, 11:22 UTC",
+    windSpeed: "4.6 m/s",
+    polarization: "RH / RV Circular Hybrid",
+    dampingDb: "-7.2 dB",
+    areaKm2: 13.5,
+    incidenceAngle: "33.2°",
+    resolution: "3m High-Res",
+    rejectionStatus: "Non-Hazard Filters Cleared",
+    backscatterContrast: "High Contrast (Normalized σ⁰ = -25.2 dB)",
+  },
+  {
+    pass: "P-19",
+    actual: 95.4,
+    benchmark: 99.1,
+    sensor: "Sentinel-1A IW GRD",
+    date: "12 Sep 2026, 06:05 UTC",
+    windSpeed: "5.3 m/s",
+    polarization: "VV + VH Dual-Pol",
+    dampingDb: "-8.1 dB",
+    areaKm2: 14.0,
+    incidenceAngle: "35.8°",
+    resolution: "10m High-Res",
+    rejectionStatus: "Biogenic Slick Rejection Confirmed",
+    backscatterContrast: "Very High Contrast (Normalized σ⁰ = -27.8 dB)",
+  },
+  {
+    pass: "Current",
+    actual: 94.6,
+    benchmark: 98.6,
+    sensor: "Sentinel-1A + ECMWF ERA5",
+    date: "Live Capture (12 Sep, 18:24 UTC)",
+    windSpeed: "5.1 m/s @ 289°",
+    polarization: "VV + VH Complex Tensor",
+    dampingDb: "-7.8 dB",
+    areaKm2: 14.2,
+    incidenceAngle: "34.8°",
+    resolution: "10m Ground Resolution",
+    rejectionStatus: "Full Look-Alike Filter Active",
+    backscatterContrast: "Very High Contrast (Normalized σ⁰ = -27.1 dB)",
   },
 ];
 
-type AnalysisTab =
-  | "counterfactual"
+export const MODEL_BACKBONE_PROFILES = {
+  "Adaptive U-Net v2.1": {
+    name: "Adaptive U-Net v2.1",
+    confidence: 94.6,
+    rejectionRate: 98.2,
+    latency: "4.2 min",
+    coverage: "1,420 km²",
+    subModel: "Adaptive U-Net v2.1",
+    rejectionSub: "Biogenic films & wind shadows",
+    latencySub: "Cloud GPU TensorRT Pipeline",
+    coverageSub: "West Coast Indian EEZ ground truth",
+    backboneDesc: "ResNet-50 Feature Pyramid Network with Dual-Pol Complex Tensor Layers.",
+    f1Score: "0.962",
+    iouScore: "0.914",
+  },
+  "Swin-Transformer v2": {
+    name: "Swin-Transformer v2",
+    confidence: 96.1,
+    rejectionRate: 98.9,
+    latency: "6.8 min",
+    coverage: "1,420 km²",
+    subModel: "Swin-B/16 Multi-Scale",
+    rejectionSub: "Biogenic films & internal waves",
+    latencySub: "FlashAttention-2 Cloud Pipeline",
+    coverageSub: "West Coast Indian EEZ ground truth",
+    backboneDesc: "Hierarchical Vision Transformer Backbone with Shifted Windows & FlashAttention-2.",
+    f1Score: "0.978",
+    iouScore: "0.938",
+  },
+  "ResNet-50 FPN Dual-Pol": {
+    name: "ResNet-50 FPN Dual-Pol",
+    confidence: 92.4,
+    rejectionRate: 96.5,
+    latency: "2.8 min",
+    coverage: "1,420 km²",
+    subModel: "ResNet-50 FPN Light",
+    rejectionSub: "Calm ocean specular reflections",
+    latencySub: "TensorRT FP16 Edge Pipeline",
+    coverageSub: "West Coast Indian EEZ ground truth",
+    backboneDesc: "ResNet-50 Feature Pyramid Network with Dual-Pol Complex Tensor Layers.",
+    f1Score: "0.941",
+    iouScore: "0.887",
+  },
+};
+
+export interface EvidenceRecord {
+  id: string;
+  sensor: string;
+  sensorType: string;
+  time: string;
+  observation: string;
+  processingModel: string;
+  result: string;
+  hash: string;
+  fullHash: string;
+  status: "VERIFIED" | "VALIDATED" | "INTEGRITY_CHECK_PASS";
+  confidence: number;
+  rawPayload: Record<string, any>;
+}
+
+export const EVIDENCE_CHAIN_RECORDS: EvidenceRecord[] = [
+  {
+    id: "EVID-SAR-001",
+    sensor: "Sentinel-1A C-SAR (IW Mode)",
+    sensorType: "Satellite Synthetic Aperture Radar",
+    time: "2026-09-18 14:14:43 UTC",
+    observation: "Backscatter Damping Δσ⁰ = -7.8 dB across 14.2 km² surface footprint",
+    processingModel: "Adaptive U-Net v2.1 + Dual-Pol Complex Tensor",
+    result: "Confirmed mineral hydrocarbon slick; biogenic look-alikes rejected (VV/VH cross-ratio = 0.12)",
+    hash: "a3f89b2c...7d1e",
+    fullHash: "a3f89b2c94e82017df83c9201948ba02384f981029348bca1209384fac917d1e",
+    status: "VERIFIED",
+    confidence: 98.6,
+    rawPayload: {
+      sensor_id: "S1A_IW_GRDH_1SDV",
+      orbit_pass: 194,
+      incidence_angle_deg: 34.8,
+      sigma0_mean_db: -27.1,
+      damping_contrast_db: -7.8,
+      footprint_coords: [[18.69, 72.38], [18.75, 72.41], [18.64, 72.35]],
+      area_km2: 14.2,
+      calibration: "ESA Level-1 Radiometric Normalization",
+    },
+  },
+  {
+    id: "EVID-AIS-002",
+    sensor: "DG Shipping Class-A AIS Receiver",
+    sensorType: "Terrestrial & Satellite AIS Network",
+    time: "2026-09-18 11:20:00 UTC",
+    observation: "Drastic speed drop 13.8 -> 1.4 kts with 94 min transponder blackout",
+    processingModel: "Spatiotemporal Kinematic Anomaly Detector v3.4",
+    result: "Coincident trajectory intersection with calculated Lagrangian origin centroid (CPA = 0.6 km)",
+    hash: "f7c18a99...4b22",
+    fullHash: "f7c18a992837190bb4c8109238410948bca10293840192834bfa901294874b22",
+    status: "VERIFIED",
+    confidence: 99.4,
+    rawPayload: {
+      mmsi: 636019842,
+      vessel_name: "MT PACIFIC VOYAGER",
+      imo: "9438200",
+      speed_before_kts: 13.8,
+      speed_during_kts: 1.4,
+      ais_blackout_min: 94,
+      gap_start_utc: "2026-09-18T10:32:00Z",
+      gap_end_utc: "2026-09-18T12:06:00Z",
+      drift_heading_deg: 312,
+      cpa_distance_km: 0.6,
+    },
+  },
+  {
+    id: "EVID-LAG-003",
+    sensor: "OpenDrift Lagrangian Hydrodynamic Kernel v1.9",
+    sensorType: "Oceanic Advection & Diffusion Physics Engine",
+    time: "2026-09-18 17:00:00 UTC",
+    observation: "5,000 particle reverse hindcast integration over 18h release window",
+    processingModel: "Runge-Kutta 4th Order Particle Dispersion",
+    result: "High-probability release ellipse centered at 18.6398°N, 72.0032°E (Zone Alpha, 97.7% confidence)",
+    hash: "9e44d1bc...33aa",
+    fullHash: "9e44d1bc489201938bfa019283401928301928301928301928340192834a33aa",
+    status: "INTEGRITY_CHECK_PASS",
+    confidence: 97.7,
+    rawPayload: {
+      kernel_version: "OpenDrift v1.9.2-c",
+      particle_count: 5000,
+      time_step_sec: 180,
+      windage_factor: 0.035,
+      diffusion_coeff_m2s: 10.0,
+      calculated_origin: [18.6398, 72.0032],
+      uncertainty_radius_km: 1.5,
+      convergence_rate_pct: 99.4,
+    },
+  },
+  {
+    id: "EVID-HYD-004",
+    sensor: "INCOIS Oceanic Buoy OB-04",
+    sensorType: "Moored Oceanographic Telemetry Buoy",
+    time: "2026-09-18 16:30:00 UTC",
+    observation: "Current speed 0.82 kts @ 68° ENE, wave height Hs = 1.8m @ 6.4s",
+    processingModel: "INCOIS Coastal Ocean State Forecasting System",
+    result: "Oceanic surface drift vector validated against acoustic Doppler current profiler (ADCP)",
+    hash: "2b881a70...cc91",
+    fullHash: "2b881a709283401928340192834019283019283019283401928340192834cc91",
+    status: "VERIFIED",
+    confidence: 96.2,
+    rawPayload: {
+      buoy_id: "INCOIS_OB04_MH",
+      location: [18.72, 72.44],
+      current_speed_kts: 0.82,
+      current_direction_deg: 68,
+      sea_surface_temp_c: 28.4,
+      salinity_psu: 35.6,
+      wave_height_m: 1.8,
+      wave_period_s: 6.4,
+    },
+  },
+  {
+    id: "EVID-MET-005",
+    sensor: "ECMWF IFS High-Resolution Atmospheric Model",
+    sensorType: "Global Numerical Weather Prediction",
+    time: "2026-09-18 16:00:00 UTC",
+    observation: "10m surface wind field 14.2 kts (7.3 m/s) @ 289° WSW",
+    processingModel: "ECMWF ERA5 Atmospheric Boundary Layer Reanalysis",
+    result: "Consistent with observed coastal anemometer telemetry at Mumbai High offshore platform",
+    hash: "c4819d0e...11bb",
+    fullHash: "c4819d0e819283401928340192834019283401928301928301928340192811bb",
+    status: "VERIFIED",
+    confidence: 98.1,
+    rawPayload: {
+      model_grid: "0.1_deg_lat_lon",
+      wind_speed_kts: 14.2,
+      wind_direction_deg: 289,
+      gust_kts: 18.5,
+      surface_pressure_hpa: 1011.4,
+      air_temp_c: 29.1,
+      relative_humidity_pct: 82,
+    },
+  },
+  {
+    id: "EVID-RAD-006",
+    sensor: "Mumbai Coastal VTS Radar Network",
+    sensorType: "X-band Vessel Traffic Shore Radar",
+    time: "2026-09-18 12:15:00 UTC",
+    observation: "Target track echo confirmed vessel lingering at origin waypoint 18.64°N, 72.01°E",
+    processingModel: "Multi-Sensor Track Fusion Filter (MSTF)",
+    result: "Corroborates AIS blackout window with continuous radar kinematic plot",
+    hash: "5d92a10f...88cc",
+    fullHash: "5d92a10f918230192834019283401928301928301928340192834019283488cc",
+    status: "VERIFIED",
+    confidence: 99.1,
+    rawPayload: {
+      station_id: "VTS_MUMBAI_PRATAPGAD",
+      target_track_id: "RAD-TGT-9482",
+      rcs_db: 42.1,
+      track_duration_min: 140,
+      closest_point_approach_km: 0.5,
+      signature_match: "Capesize Crude Tanker Hull Profile",
+    },
+  },
+];
+
+const CustomTrendTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload as SatellitePassRecord;
+    return (
+      <div className="bg-[#0B2545] text-white p-3 rounded-xl shadow-xl border border-sky-400/30 text-xs font-mono space-y-1 z-50">
+        <div className="font-bold text-sky-300 font-display flex items-center justify-between gap-3">
+          <span>Pass {label}</span>
+          <span className="text-[10px] bg-sky-900/80 px-1.5 py-0.5 rounded text-sky-200">
+            {data.sensor}
+          </span>
+        </div>
+        <div className="text-[11px] text-slate-300">{data.date}</div>
+        <div className="border-t border-white/10 pt-1.5 space-y-0.5 text-[11px]">
+          <div className="flex justify-between gap-4">
+            <span className="text-slate-400">Detection Accuracy:</span>
+            <strong className="text-emerald-400 font-bold">{data.actual}%</strong>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-slate-400">Baseline Benchmark:</span>
+            <span className="text-emerald-300">{data.benchmark}%</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-slate-400">Damping (Δσ⁰):</span>
+            <span className="text-sky-300">{data.dampingDb}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-slate-400">Wind Condition:</span>
+            <span className="text-slate-200">{data.windSpeed}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+export type AnalysisTab =
+  | "pipeline"
   | "whatif"
+  | "environmental"
+  | "economic"
   | "confidence"
   | "historical"
-  | "reports";
+  | "traceability";
 
 export const AnalysisPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { t } = useLanguage();
 
-  // Sidebar state
+  // Navigation / Sidebar State
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeNav, setActiveNav] = useState("Analysis");
 
-  // Read URL query params
-  const initialTab = (searchParams.get("tab") as AnalysisTab) || "counterfactual";
+  // Sub-Tab State
+  const initialTab = (searchParams.get("tab") as AnalysisTab) || "pipeline";
   const initialVesselQuery = searchParams.get("vessel") || "";
-
   const [activeTab, setActiveTab] = useState<AnalysisTab>(initialTab);
+
+  // Notifications / Modals
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [reportStage, setReportStage] = useState<StageReportType>("analysis");
+  const [isRecalculating, setIsRecalculating] = useState(false);
+
+  const triggerToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((cur) => (cur === msg ? null : cur));
+    }, 3500);
+  };
 
   // --------------------------------------------------------------------------
-  // SHARED CANDIDATE STATE (Across all sub-tabs)
+  // CANDIDATE VESSEL SELECTION
   // --------------------------------------------------------------------------
-  const candidates = INCIDENT_DATA.vessels;
+  const candidates: VesselCandidate[] = INCIDENT_DATA.vessels;
   const [selectedCandidate, setSelectedCandidate] = useState<VesselCandidate>(() => {
     if (initialVesselQuery) {
       const match = candidates.find(
@@ -241,2205 +525,4052 @@ export const AnalysisPage: React.FC = () => {
     return candidates[0];
   });
 
-  const triggerToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((cur) => (cur === msg ? null : cur));
-    }, 3500);
-  };
-
   // --------------------------------------------------------------------------
-  // TAB 1: COUNTERFACTUAL LAB STATE (Stage 12)
+  // 1. PROBABLE OIL SPILL ORIGIN & REVERSE LAGRANGIAN TUNING STATE
   // --------------------------------------------------------------------------
-  const [labMode, setLabMode] = useState<"single" | "runAll">("single");
-  const [timeOffsetHours, setTimeOffsetHours] = useState<number>(0.0); // -3.0h to +3.0h
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [simulationProgress, setSimulationProgress] = useState(100);
-  const [activeOverlayView, setActiveOverlayView] = useState<"sideBySide" | "overlay">("sideBySide");
+  const [releaseTimeOffsetHours, setReleaseTimeOffsetHours] = useState<number>(-18.0); // -36h to -6h
+  const [originWindSpeedKts, setOriginWindSpeedKts] = useState<number>(14.2); // kts (ECMWF)
+  const [originWindDirDeg, setOriginWindDirDeg] = useState<number>(289); // deg (WSW)
+  const [originCurrentSpeedKts, setOriginCurrentSpeedKts] = useState<number>(0.82); // kts (INCOIS)
+  const [originCurrentDirDeg, setOriginCurrentDirDeg] = useState<number>(68); // deg (ENE)
+  const [windageFactor, setWindageFactor] = useState<number>(0.035); // 0.015 to 0.055
+  const [currentScalar, setCurrentScalar] = useState<number>(1.0); // 0.5x to 2.0x
+  const [diffusionCoefficient, setDiffusionCoefficient] = useState<number>(10.0); // m²/s (2 to 25)
+  const [particleCount, setParticleCount] = useState<number>(5000);
+  const [selectedOriginZoneId, setSelectedOriginZoneId] = useState<string>("zone-alpha");
+  const [originTimelineHour, setOriginTimelineHour] = useState<number>(-18); // -36h to 0h
+  const [isPlayingOriginTimeline, setIsPlayingOriginTimeline] = useState<boolean>(false);
+  const [showOriginDetailsModal, setShowOriginDetailsModal] = useState<boolean>(false);
 
-  // Live dynamic correlation calculation based on time offset
-  const liveCorrelation = useMemo(() => {
-    const isTop = selectedCandidate.rank === 1;
-    const absOffset = Math.abs(timeOffsetHours);
-    if (isTop) {
-      const discrepancy = Math.min(25, 0.6 + absOffset * 3.4);
-      const match = Math.max(75, 99.4 - absOffset * 3.4);
-      return {
-        discrepancy: discrepancy.toFixed(1),
-        match: match.toFixed(1),
-        status: absOffset < 1.0 ? "OPTIMAL CONVERGENCE" : "DEGRADED TIME-MATCH",
-        timeLabel:
-          timeOffsetHours === 0
-            ? "T₀ = 02:45 UTC (Nominal Discharge)"
-            : timeOffsetHours > 0
-            ? `T₀ + ${timeOffsetHours.toFixed(1)}h (0${(2.75 + timeOffsetHours).toFixed(1).replace(".", ":")}0 UTC)`
-            : `T₀ - ${absOffset.toFixed(1)}h (0${Math.max(0, 2.75 - absOffset).toFixed(1).replace(".", ":")}0 UTC)`,
-      };
-    } else {
-      const discrepancy = Math.min(80, 44.8 + absOffset * 4.0);
-      const match = Math.max(20, 55.2 - absOffset * 4.0);
-      return {
-        discrepancy: discrepancy.toFixed(1),
-        match: match.toFixed(1),
-        status: "DIVERGENT TRACK",
-        timeLabel: `T₀ ${timeOffsetHours >= 0 ? "+" : ""}${timeOffsetHours.toFixed(1)}h Release Offset`,
-      };
-    }
-  }, [selectedCandidate, timeOffsetHours]);
-
-  const handleRunSimulation = async () => {
-    setIsSimulating(true);
-    setSimulationProgress(20);
-
-    try {
-      const res = await sahayyaApi.simulation.runCounterfactual("IN-MH-2026", 1, {
-        wind_speed_ms: 7.5,
-        wind_direction_deg: 245.0,
-        current_speed_ms: 0.85,
-        current_direction_deg: 65.0,
-      });
-      setSimulationProgress(65);
-
-      setTimeout(async () => {
-        setSimulationProgress(100);
-        setIsSimulating(false);
-        try {
-          if (res?.job_id) {
-            const statusRes = await sahayyaApi.simulation.getCounterfactualStatus(res.job_id);
-            if (statusRes?.match_score_pct) {
-              triggerToast(`OpenDrift Hydrodynamic Hindcast: ${statusRes.match_score_pct}% overlap match!`);
-              return;
-            }
-          }
-        } catch (e) {}
-        triggerToast(`Counterfactual hydrodynamics converged for ${selectedCandidate.name}`);
-      }, 700);
-    } catch (err) {
-      setTimeout(() => {
-        setSimulationProgress(100);
-        setIsSimulating(false);
-        triggerToast(`Counterfactual hydrodynamics computed for ${selectedCandidate.name}`);
-      }, 800);
-    }
-  };
-
-  // Evidence breakdown for candidate
-  const candidateEvidenceData = useMemo(() => {
-    const isTop = selectedCandidate.rank === 1;
-    const absOffset = Math.abs(timeOffsetHours);
-    const timePenalty = absOffset * 4.0;
-    return [
-      {
-        name: "Time Match",
-        score: isTop ? Math.max(70, Math.round(99.2 - timePenalty)) : Math.min(80, Math.round(selectedCandidate.score * 0.9)),
-        color: "#1E5FBF",
-      },
-      {
-        name: "Location Match",
-        score: isTop ? Math.max(75, Math.round(97.8 - timePenalty * 0.5)) : Math.min(75, Math.round(selectedCandidate.score * 0.85)),
-        color: "#2E8FE8",
-      },
-      {
-        name: "Route Alignment",
-        score: isTop ? 99.4 : Math.min(70, Math.round(selectedCandidate.score * 0.8)),
-        color: "#0EA5B7",
-      },
-      {
-        name: "AIS Consistency",
-        score: isTop ? 97.2 : Math.min(65, Math.round(selectedCandidate.score * 0.75)),
-        color: "#E11D48",
-      },
-      {
-        name: "Physics Match",
-        score: isTop ? Math.max(70, Math.round(94.7 - timePenalty * 0.8)) : Math.min(60, Math.round(selectedCandidate.score * 0.7)),
-        color: "#6366F1",
-      },
-    ];
-  }, [selectedCandidate, timeOffsetHours]);
-
-  // --------------------------------------------------------------------------
-  // TAB 2: WHAT-IF SIMULATOR STATE (Stage 18 - Priority #1)
-  // --------------------------------------------------------------------------
-  const [selectedStrategyId, setSelectedStrategyId] = useState("strat-1");
-  // Interactive assumption sliders:
-  const [simWindSpeedKts, setSimWindSpeedKts] = useState<number>(14.2); // 5 to 30 kts (nominal 14.2)
-  const [simDeployDelayHours, setSimDeployDelayHours] = useState<number>(2.0); // 0 to 8 h (nominal 2.0)
-  const [simBoomMeters, setSimBoomMeters] = useState<number>(1500); // 500 to 3000 m (nominal 1500)
-
-  // Live strategy recalculation engine with uncertainty ranges
-  const dynamicScenarios = useMemo(() => {
-    // Environmental perturbation multipliers
-    const windFactor = simWindSpeedKts / 14.2; // 1.0 nominal
-    const delayDelta = simDeployDelayHours - 2.0; // 0 nominal
-    const boomFactor = 1500 / simBoomMeters; // 1.0 nominal
-
-    // Base definition with mathematical perturbation
-    const baseList = [
-      {
-        id: "strat-1",
-        name: "Immediate Containment (T + 0h)",
-        desc: "Deploy ICGS Vikram offshore barrier within 2 hours of SAR detection with high-speed ocean boom.",
-        baseImpact: 4.2,
-        baseArea: 295.0,
-        baseTime: 14.5,
-        baseCost: 42,
-        recommended: true,
-        baseScore: 94,
-      },
-      {
-        id: "strat-2",
-        name: "Delayed Mobilization (T + 6h)",
-        desc: "Wait for secondary SAR optical confirmation pass before surface fleet dispatch.",
-        baseImpact: 38.6,
-        baseArea: 442.0,
-        baseTime: 36.0,
-        baseCost: 118,
-        recommended: false,
-        baseScore: 52,
-      },
-      {
-        id: "strat-3",
-        name: "Zone A Skimming Prioritization",
-        desc: "Focus all skimming cutters exclusively on Alibaug turtle breeding beaches and mangrove nursery zones.",
-        baseImpact: 12.8,
-        baseArea: 340.0,
-        baseTime: 22.0,
-        baseCost: 75,
-        recommended: false,
-        baseScore: 81,
-      },
-    ];
-
-    return baseList.map((sc) => {
-      // Dynamic adjustments
-      let impact = sc.baseImpact;
-      let area = sc.baseArea;
-      let time = sc.baseTime;
-      let cost = sc.baseCost;
-
-      // Wind pushes slick faster towards shore
-      impact = impact * (0.6 + 0.4 * windFactor);
-      area = area * (0.8 + 0.2 * windFactor);
-
-      // Delay increases spread and containment difficulty
-      if (delayDelta > 0) {
-        impact += delayDelta * (sc.id === "strat-1" ? 1.8 : sc.id === "strat-3" ? 2.5 : 4.0);
-        area += delayDelta * 18.0;
-        time += delayDelta * 1.5;
-        cost += delayDelta * 5.0;
-      } else if (delayDelta < 0) {
-        impact = Math.max(1.2, impact + delayDelta * 1.2);
-        area = Math.max(250, area + delayDelta * 12.0);
-        time = Math.max(8.0, time + delayDelta * 1.2);
-      }
-
-      // Boom length reduces impact
-      impact = impact * (0.5 + 0.5 * boomFactor);
-
-      // Best-case / worst-case bounds (±15% to ±30% depending on environmental turbulence)
-      const bestImpact = Math.max(0.8, impact * 0.78).toFixed(1);
-      const worstImpact = (impact * 1.32).toFixed(1);
-
-      const bestArea = Math.round(area * 0.92);
-      const worstArea = Math.round(area * 1.14);
-
-      const bestTime = Math.max(6.0, time * 0.85).toFixed(1);
-      const worstTime = (time * 1.2).toFixed(1);
-
-      const bestCost = Math.round(cost * 0.9);
-      const worstCost = Math.round(cost * 1.18);
-
-      // Dynamic score
-      let score = Math.round(100 - impact * 1.5 - (time / 40) * 20);
-      score = Math.max(20, Math.min(98, score));
-
-      return {
-        ...sc,
-        score,
-        impactMean: impact.toFixed(1),
-        bestImpact,
-        worstImpact,
-        areaMean: Math.round(area),
-        bestArea,
-        worstArea,
-        timeMean: time.toFixed(1),
-        bestTime,
-        worstTime,
-        costMean: Math.round(cost),
-        bestCost,
-        worstCost,
-      };
+  // Dynamic Probable Origin Hydrodynamic Simulation
+  const activeOriginSimulation = useMemo(() => {
+    return simulateOilSpillHydrodynamics({
+      centroid: [18.69, 72.38],
+      windSpeedKts: originWindSpeedKts,
+      windDirDeg: originWindDirDeg,
+      currentSpeedKts: originCurrentSpeedKts,
+      currentDirDeg: originCurrentDirDeg,
+      releaseOffsetHours: releaseTimeOffsetHours,
+      releaseVolumeM3: 18000,
+      containmentEffPct: 0,
+      chemicalDispersant: false,
+      responseDelayHours: 0,
+      turbulentDiffusion: diffusionCoefficient,
     });
-  }, [simWindSpeedKts, simDeployDelayHours, simBoomMeters]);
-
-  // Auto-generated dynamic recommendation sentence
-  const dynamicRecommendation = useMemo(() => {
-    const strat1 = dynamicScenarios[0];
-    const strat2 = dynamicScenarios[1];
-    const savingsLakhs = Math.round(strat2.costMean - strat1.costMean);
-    return `Fastest containment at lowest cost (₹${strat1.bestCost}L–₹${strat1.worstCost}L), restricting Maharashtra coastline impact to ${strat1.bestImpact}%–${strat1.worstImpact}% and saving ~₹${savingsLakhs}L vs delayed dispatch despite higher initial mobilization speed.`;
-  }, [dynamicScenarios]);
-
-  // --------------------------------------------------------------------------
-  // TAB 3: MODEL CONFIDENCE STATE
-  // --------------------------------------------------------------------------
-  const [selectedArtifactModal, setSelectedArtifactModal] = useState<LookAlikeArtifact | null>(null);
-  const [showFullModelMetrics, setShowFullModelMetrics] = useState(false);
-
-  const modelHistoryData = [
-    { pass: "P-14", confidence: 91.2, fpRejection: 97.4 },
-    { pass: "P-15", confidence: 92.8, fpRejection: 98.0 },
-    { pass: "P-16", confidence: 90.5, fpRejection: 96.8 },
-    { pass: "P-17", confidence: 94.1, fpRejection: 98.2 },
-    { pass: "P-18", confidence: 93.6, fpRejection: 97.9 },
-    { pass: "P-19", confidence: 95.4, fpRejection: 98.9 },
-    { pass: "Current", confidence: 94.6, fpRejection: 98.2 },
-  ];
-
-  // --------------------------------------------------------------------------
-  // TAB 4: HISTORICAL COMPARISON STATE
-  // --------------------------------------------------------------------------
-  const [selectedHistIds, setSelectedHistIds] = useState<string[]>([
-    "HIST-2017-02",
-    "HIST-2010-03",
+  }, [
+    originWindSpeedKts,
+    originWindDirDeg,
+    originCurrentSpeedKts,
+    originCurrentDirDeg,
+    releaseTimeOffsetHours,
+    diffusionCoefficient,
   ]);
 
-  const handleToggleHist = (id: string) => {
-    if (selectedHistIds.includes(id)) {
-      if (selectedHistIds.length > 1) {
-        setSelectedHistIds(selectedHistIds.filter((i) => i !== id));
-      }
-    } else {
-      if (selectedHistIds.length < 2) {
-        setSelectedHistIds([...selectedHistIds, id]);
-      } else {
-        setSelectedHistIds([selectedHistIds[1], id]);
-      }
+  // Origin Timeline Playback Animation Loop
+  useEffect(() => {
+    let timer: any = null;
+    if (isPlayingOriginTimeline) {
+      timer = setInterval(() => {
+        setOriginTimelineHour((cur) => {
+          if (cur >= 0) return -36;
+          return cur + 3;
+        });
+      }, 1000);
     }
-  };
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isPlayingOriginTimeline]);
 
-  const comparedIncidents = useMemo(() => {
-    return HISTORICAL_INCIDENTS.filter((h) => selectedHistIds.includes(h.id));
-  }, [selectedHistIds]);
+  // --------------------------------------------------------------------------
+  // 2. WHAT-IF SCENARIO SIMULATOR STATE (Side-by-Side Reality vs Scenario)
+  // --------------------------------------------------------------------------
+  const [whatIfWindSpeed, setWhatIfWindSpeed] = useState<number>(8.5); // m/s
+  const [whatIfWindDir, setWhatIfWindDir] = useState<number>(240); // deg
+  const [whatIfCurrentSpeed, setWhatIfCurrentSpeed] = useState<number>(1.2); // m/s
+  const [whatIfBoomLength, setWhatIfBoomLength] = useState<number>(2500); // meters
+  const [whatIfDispatchDelayHours, setWhatIfDispatchDelayHours] = useState<number>(3.0); // hours
+  const [whatIfChemicalDispersant, setWhatIfChemicalDispersant] = useState<boolean>(true);
 
-  // Comparative Track Record data for IN-MH-2026 vs Historical Average
-  const benchmarkComparisonData = [
-    { metric: "Attribution Certainty", thisCase: 98.8, historicalAvg: 64.6, bestPast: 100, unit: "%" },
-    { metric: "SAR Detection Confidence", thisCase: 94.6, historicalAvg: 76.2, bestPast: 96.0, unit: "%" },
-    { metric: "Containment Projection", thisCase: 92.0, historicalAvg: 58.5, bestPast: 91.0, unit: "%" },
-    { metric: "Early Warning Lead Time", thisCase: 85.0, historicalAvg: 32.0, bestPast: 80.0, unit: "% Score" },
+  // --------------------------------------------------------------------------
+  // 3. GIS MAP & TIMELINE SCRUBBER STATE
+  // --------------------------------------------------------------------------
+  const [timelineHour, setTimelineHour] = useState<number>(0); // -24h to +48h
+  const [isPlayingTimeline, setIsPlayingTimeline] = useState(false);
+  const [mapLayerToggles, setMapLayerToggles] = useState({
+    slickPolygon: true,
+    originEllipse: true,
+    vesselTracks: true,
+    reverseParticles: true,
+    forecastPath: true,
+    weatherVectors: true,
+  });
+
+  // --------------------------------------------------------------------------
+  // 4. MODEL CONFIDENCE & REJECTION DIAGNOSTIC INTERACTION STATE
+  // --------------------------------------------------------------------------
+  const [selectedSatellitePass, setSelectedSatellitePass] = useState<string>("Current");
+  const [selectedModelArch, setSelectedModelArch] = useState<string>("Adaptive U-Net v2.1");
+  const [showAttributionDeepDive, setShowAttributionDeepDive] = useState<boolean>(false);
+  const [simulatedRejectionWind, setSimulatedRejectionWind] = useState<number>(5.1);
+  const [simulatedCrossPolDb, setSimulatedCrossPolDb] = useState<number>(-7.8);
+  const [showSandbox, setShowSandbox] = useState<boolean>(false);
+
+  const activePassData = useMemo(() => {
+    return (
+      SATELLITE_ACCURACY_TREND.find((p) => p.pass === selectedSatellitePass) ||
+      SATELLITE_ACCURACY_TREND[6]
+    );
+  }, [selectedSatellitePass]);
+
+  const currentModelProfile = useMemo(() => {
+    return (
+      (MODEL_BACKBONE_PROFILES as any)[selectedModelArch] ||
+      MODEL_BACKBONE_PROFILES["Adaptive U-Net v2.1"]
+    );
+  }, [selectedModelArch]);
+
+  // --------------------------------------------------------------------------
+  // 5. WORKBENCH & STRATEGY SIMULATION INTERFACE STATE
+  // --------------------------------------------------------------------------
+  const [hindcastViewMode, setHindcastViewMode] = useState<"Dual" | "Overlap">("Dual");
+  const [selectedTacticalStrategy, setSelectedTacticalStrategy] = useState<"immediate" | "delayed" | "zoneA">("immediate");
+  const [spillDNAModalOpen, setSpillDNAModalOpen] = useState<boolean>(false);
+  const [spillDNAViewMode, setSpillDNAViewMode] = useState<"3D" | "Cross-section" | "Thickness" | "Spectral">("3D");
+
+  // --------------------------------------------------------------------------
+  // 6. HISTORICAL ANALOGUE BENCHMARKING STATE
+  // --------------------------------------------------------------------------
+  const [selectedHistoricalId, setSelectedHistoricalId] = useState<string>("HIST-2010-03");
+  const [historicalFilter, setHistoricalFilter] = useState<string>("ALL");
+
+  const selectedHistoricalIncident = useMemo(() => {
+    return (
+      HISTORICAL_INCIDENTS.find((h) => h.id === selectedHistoricalId) ||
+      HISTORICAL_INCIDENTS[1]
+    );
+  }, [selectedHistoricalId]);
+
+  const filteredHistoricalIncidents = useMemo(() => {
+    if (historicalFilter === "ARABIAN") {
+      return HISTORICAL_INCIDENTS.filter((h) =>
+        h.region.toLowerCase().includes("arabian")
+      );
+    }
+    if (historicalFilter === "BAY_OF_BENGAL") {
+      return HISTORICAL_INCIDENTS.filter((h) =>
+        h.region.toLowerCase().includes("bengal")
+      );
+    }
+    if (historicalFilter === "INDIAN_OCEAN") {
+      return HISTORICAL_INCIDENTS.filter((h) =>
+        h.region.toLowerCase().includes("indian ocean")
+      );
+    }
+    if (historicalFilter === "HIGH_SEVERITY") {
+      return HISTORICAL_INCIDENTS.filter((h) => h.severityScore >= 80);
+    }
+    return HISTORICAL_INCIDENTS;
+  }, [historicalFilter]);
+
+  // --------------------------------------------------------------------------
+  // 7. EVIDENCE TRACEABILITY & INSPECTION MODAL STATE
+  // --------------------------------------------------------------------------
+  const [inspectedEvidence, setInspectedEvidence] = useState<EvidenceRecord | null>(null);
+
+  // --------------------------------------------------------------------------
+  // 8. ENVIRONMENTAL IMPACT ANALYSIS STATE & DATA
+  // --------------------------------------------------------------------------
+  const [envTimelineStep, setEnvTimelineStep] = useState<"Current" | "+6h" | "+12h" | "+24h" | "+48h">("Current");
+  const [selectedEnvZoneId, setSelectedEnvZoneId] = useState<string>("env-1");
+
+  const envTimelineOffsetHours = useMemo(() => {
+    switch (envTimelineStep) {
+      case "Current": return 0;
+      case "+6h": return 6;
+      case "+12h": return 12;
+      case "+24h": return 24;
+      case "+48h": return 48;
+      default: return 0;
+    }
+  }, [envTimelineStep]);
+
+  // Sensitive Ecological Zones Dataset
+  const SENSITIVE_ECOLOGICAL_ZONES = [
+    {
+      id: "env-1",
+      name: "Alibaug Mangrove Sanctuary & Coastal Nursery",
+      type: "Mangrove Biome & Fish Breeding Nursery",
+      category: "Critical Marine Habitat",
+      distanceKm: 38.2,
+      baseRiskTier: "CRITICAL EXPOSURE",
+      areaKm2: 42.5,
+      keySpecies: "Avicennia marina, Mud crab, Mangrove pitta, Mudskippers",
+      sensitivityIndex: 9.6,
+      coordinates: [18.641, 72.871] as [number, number],
+      shorelineType: "Dense Tidal Prop-Root Mangroves & Intertidal Mudflats",
+      recoveryYears: "8 - 15 Years",
+    },
+    {
+      id: "env-2",
+      name: "Murud Olive Ridley Sea Turtle Nesting Beaches",
+      type: "Vulnerable Marine Reptile Nesting Coast",
+      category: "Endangered Fauna Sanctuary",
+      distanceKm: 44.5,
+      baseRiskTier: "HIGH THREAT",
+      areaKm2: 28.0,
+      keySpecies: "Lepidochelys olivacea (Olive Ridley), Ghost crabs, Shorebirds",
+      sensitivityIndex: 9.2,
+      coordinates: [18.328, 72.955] as [number, number],
+      shorelineType: "Sandy High-Energy Beaches & Dune Vegetation",
+      recoveryYears: "4 - 7 Years",
+    },
+    {
+      id: "env-3",
+      name: "Elephanta Island Coral Patches & Marine Sanctuary",
+      type: "Sub-Tidal Coral Reef & Heritage Buffer",
+      category: "Coral Ecosystem & Heritage Zone",
+      distanceKm: 52.0,
+      baseRiskTier: "MODERATE DRIFT RISK",
+      areaKm2: 18.2,
+      keySpecies: "Porites lutea (Hard coral), Favia corals, Reef teleosts",
+      sensitivityIndex: 8.8,
+      coordinates: [18.963, 72.932] as [number, number],
+      shorelineType: "Rocky Intertidal Reef Platform & Sandy Shelves",
+      recoveryYears: "10 - 20 Years",
+    },
+    {
+      id: "env-4",
+      name: "Sassoon Docks & Alibaug Coastal Fishery Corridor",
+      type: "Active Artisanal & Commercial Trawling Zone",
+      category: "Fisheries Resource Domain",
+      distanceKm: 32.0,
+      baseRiskTier: "IMMEDIATE CATCH CONTAMINATION",
+      areaKm2: 110.0,
+      keySpecies: "Bombay Duck (Harpadon nehereus), Pomfret, Tiger prawns",
+      sensitivityIndex: 9.0,
+      coordinates: [18.720, 72.650] as [number, number],
+      shorelineType: "Nearshore Coastal Pelagic & Demersal Fishing Grounds",
+      recoveryYears: "2 - 5 Years",
+    },
+    {
+      id: "env-5",
+      name: "Revdanda Estuarine Mudflats & Salt Marshes",
+      type: "Wetlands / Ramsar Candidate Estuary",
+      category: "Estuarine Wetland Ecosystem",
+      distanceKm: 41.0,
+      baseRiskTier: "HIGH SEDIMENTATION RISK",
+      areaKm2: 35.4,
+      keySpecies: "Lesser Flamingo, Asian Dowitcher, Polychaete worms",
+      sensitivityIndex: 8.5,
+      coordinates: [18.552, 72.930] as [number, number],
+      shorelineType: "Estuarine Soft Sediment & Saltmarsh Halophytes",
+      recoveryYears: "5 - 10 Years",
+    },
   ];
 
   // --------------------------------------------------------------------------
-  // TAB 5: EXECUTIVE REPORTS STATE
+  // 9. ECONOMIC & COST IMPACT ANALYSIS STATE & DATA
   // --------------------------------------------------------------------------
-  const [reportSections, setReportSections] = useState({
-    sec1: true, // Executive Summary
-    sec2: true, // Satellite SAR Observation
-    sec3: true, // Hydrodynamic Hindcast
-    sec4: true, // AIS Kinematic Anomaly
-    sec5: true, // Multi-Candidate Attribution
-    sec6: true, // Response Operations What-If
-    sec7: true, // Ecological Vulnerability
-    sec8: true, // Historical Benchmarking
-    sec9: true, // Command Sign-Off & Chain of Custody
-  });
-  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [selectedEconomicAssetId, setSelectedEconomicAssetId] = useState<string>("econ-1");
 
-  const toggleSection = (key: keyof typeof reportSections) => {
-    setReportSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+  // Economic Assets Dataset
+  const ECONOMIC_COASTAL_ASSETS = [
+    {
+      id: "econ-1",
+      name: "Jawaharlal Nehru Port Trust (JNPT)",
+      type: "Major Container Port & Navigation Fairway",
+      location: "Navi Mumbai / Elephanta Channel",
+      distanceKm: 48.0,
+      annualTrafficValCr: "₹4,20,000 Cr",
+      riskLevel: "MODERATE FAIRWAY RISK",
+      potentialLossCr: "₹18.5 Cr / day",
+      assetValue: "India's largest premier container hub; ship movement delays incur heavy demurrage.",
+      coordinates: [18.950, 72.950] as [number, number],
+    },
+    {
+      id: "econ-2",
+      name: "Sassoon Docks & Ferry Wharf Fishing Hub",
+      type: "Commercial Fish Landing & Export Terminal",
+      location: "South Mumbai / Colaba",
+      distanceKm: 34.5,
+      annualTrafficValCr: "₹3,800 Cr",
+      riskLevel: "HIGH ECONOMIC LOSS",
+      potentialLossCr: "₹4.2 Cr / day",
+      assetValue: "Direct fish catch bans, trawler fuel waste, cold storage spoilage.",
+      coordinates: [18.915, 72.825] as [number, number],
+    },
+    {
+      id: "econ-3",
+      name: "Mumbai High Offshore Oil Platform B",
+      type: "Offshore Crude Extraction & Pipeline Manifold",
+      location: "Mumbai High West Basin",
+      distanceKm: 18.0,
+      annualTrafficValCr: "₹28,000 Cr",
+      riskLevel: "OPERATIONAL INTEGRITY MONITORED",
+      potentialLossCr: "₹8.0 Cr / day",
+      assetValue: "Subsea pipelines and wellhead platform safety exclusion zone.",
+      coordinates: [18.820, 72.250] as [number, number],
+    },
+    {
+      id: "econ-4",
+      name: "Alibaug & Murud Coastal Tourism & Resorts",
+      type: "Hospitality & Recreational Beach Economy",
+      location: "Raigad Coastal Belt",
+      distanceKm: 38.0,
+      annualTrafficValCr: "₹1,400 Cr",
+      riskLevel: "HIGH SHORELINE DAMAGE",
+      potentialLossCr: "₹2.5 Cr / day",
+      assetValue: "Hotel cancellations, recreational beach closure, water sports shutdown.",
+      coordinates: [18.650, 72.880] as [number, number],
+    },
+    {
+      id: "econ-5",
+      name: "Dharamtar Port & Industrial Waterway",
+      type: "Bulk Cargo & Industrial River Port",
+      location: "Amba River Estuary",
+      distanceKm: 45.0,
+      annualTrafficValCr: "₹6,500 Cr",
+      riskLevel: "MODERATE ESTUARINE THREAT",
+      potentialLossCr: "₹3.0 Cr / day",
+      assetValue: "Steel and chemical barge transport transit corridor.",
+      coordinates: [18.700, 73.020] as [number, number],
+    },
+  ];
 
-  const selectAllSections = (val: boolean) => {
-    setReportSections({
-      sec1: val,
-      sec2: val,
-      sec3: val,
-      sec4: val,
-      sec5: val,
-      sec6: val,
-      sec7: val,
-      sec8: val,
-      sec9: val,
+  const evidenceBarData = useMemo(() => {
+    const isTop = selectedCandidate.rank === 1;
+    return [
+      { name: "Time Match", score: isTop ? 99.4 : 38.0, fill: "#2563EB" },
+      { name: "Route Alignment", score: isTop ? 98.2 : 41.5, fill: "#0EA5E9" },
+      { name: "Physics Match", score: isTop ? 97.2 : 35.0, fill: "#EF4444" },
+    ];
+  }, [selectedCandidate]);
+
+  // --------------------------------------------------------------------------
+  // DYNAMIC COMPUTATIONS: REVERSE LAGRANGIAN & CORRELATION ENGINE
+  // --------------------------------------------------------------------------
+  const lagrangianOutput = useMemo(() => {
+    // Base incident centroid
+    const baseCentroid: [number, number] = [18.69, 72.38];
+    const absOffset = Math.abs(releaseTimeOffsetHours);
+
+    // Compute origin centroid by back-integrating wind and current vectors
+    // V_drift = (Current * scalar) + (Wind * windage)
+    const currentLatShift = (0.67 * currentScalar * 3600 * absOffset) / 111000 * 0.4;
+    const currentLonShift = (0.67 * currentScalar * 3600 * absOffset) / 111000 * 0.7;
+    const windLatShift = (5.1 * windageFactor * 3600 * absOffset) / 111000 * 0.3;
+    const windLonShift = (5.1 * windageFactor * 3600 * absOffset) / 111000 * 0.8;
+
+    const originLat = baseCentroid[0] - (currentLatShift + windLatShift);
+    const originLon = baseCentroid[1] - (currentLonShift + windLonShift);
+
+    // Candidate-specific spatiotemporal overlap & attribution score
+    const isTopCandidate = selectedCandidate.rank === 1;
+    const isSecond = selectedCandidate.rank === 2;
+    const isThird = selectedCandidate.rank === 3;
+
+    // Sensitivity degradation
+    const timeMatchPenalty = Math.abs(absOffset - 18.0) * 1.8;
+    const windagePenalty = Math.abs(windageFactor - 0.035) * 400;
+    const currentPenalty = Math.abs(currentScalar - 1.0) * 12;
+
+    let baseScore = isTopCandidate ? 98.8 : isSecond ? 43.5 : isThird ? 43.5 : 13.9;
+    let computedAttribution = Math.max(
+      5.0,
+      Math.min(99.9, baseScore - timeMatchPenalty - windagePenalty - currentPenalty)
+    );
+
+    // Distance to calculated origin
+    let calculatedCpaKm = isTopCandidate
+      ? Math.max(0.4, 1.2 + Math.abs(absOffset - 18.0) * 0.3)
+      : isSecond
+      ? Math.max(25.0, 41.2 + absOffset * 0.2)
+      : isThird
+      ? Math.max(20.0, 39.8 + absOffset * 0.3)
+      : 54.1;
+
+    // Spatial overlap IoU
+    let spatialIoU = isTopCandidate
+      ? Math.max(60.0, 99.4 - (timeMatchPenalty + windagePenalty) * 0.8)
+      : isSecond
+      ? Math.max(10.0, 41.5 - timeMatchPenalty * 0.5)
+      : isThird
+      ? Math.max(12.0, 46.2 - timeMatchPenalty * 0.5)
+      : 12.0;
+
+    // Origin Bounding Box
+    const originBbox = [
+      (originLat - 0.04).toFixed(4),
+      (originLon - 0.05).toFixed(4),
+      (originLat + 0.04).toFixed(4),
+      (originLon + 0.05).toFixed(4),
+    ];
+
+    // Morphing slick vertices based on release tuning
+    const slickVertices: [number, number][] = [
+      [baseCentroid[0] + 0.035, baseCentroid[1] - 0.045],
+      [baseCentroid[0] + 0.055, baseCentroid[1] - 0.015],
+      [baseCentroid[0] + 0.045, baseCentroid[1] + 0.035],
+      [baseCentroid[0] + 0.015, baseCentroid[1] + 0.065],
+      [baseCentroid[0] - 0.025, baseCentroid[1] + 0.055],
+      [baseCentroid[0] - 0.045, baseCentroid[1] + 0.020],
+      [baseCentroid[0] - 0.050, baseCentroid[1] - 0.025],
+      [baseCentroid[0] - 0.020, baseCentroid[1] - 0.055],
+    ];
+
+    // Forecast trajectory based on windage and currents
+    const forecastPath: [number, number][] = [
+      baseCentroid,
+      [baseCentroid[0] - 0.03, baseCentroid[1] + 0.05],
+      [baseCentroid[0] - 0.07, baseCentroid[1] + 0.11],
+      [baseCentroid[0] - 0.12, baseCentroid[1] + 0.18],
+      [baseCentroid[0] - 0.18, baseCentroid[1] + 0.26],
+    ];
+
+    return {
+      originCentroid: [originLat, originLon] as [number, number],
+      originBbox,
+      computedAttribution,
+      calculatedCpaKm,
+      spatialIoU,
+      slickVertices,
+      forecastPath,
+      releaseWindowStr: `${Math.round(absOffset)} hours prior to acquisition (${(absOffset - 6).toFixed(0)}h – ${(absOffset + 6).toFixed(0)}h window)`,
+      convergenceRating: computedAttribution > 80 ? "Optimal Convergence" : computedAttribution > 40 ? "Moderate Alignment" : "Divergent Vector",
+    };
+  }, [
+    releaseTimeOffsetHours,
+    windageFactor,
+    currentScalar,
+    selectedCandidate,
+  ]);
+
+  // --------------------------------------------------------------------------
+  // DYNAMIC COMPUTATIONS: WHAT-IF SCENARIO SIMULATOR
+  // --------------------------------------------------------------------------
+  const whatIfScenarioOutput = useMemo(() => {
+    // Net drift vector calculation: V_drift = V_current + 0.035 * V_wind
+    const windRad = (whatIfWindDir * Math.PI) / 180;
+    const currentRad = (142 * Math.PI) / 180; // Baseline current 142°
+
+    const u_drift = whatIfCurrentSpeed * Math.sin(currentRad) + 0.035 * whatIfWindSpeed * Math.sin(windRad);
+    const v_drift = whatIfCurrentSpeed * Math.cos(currentRad) + 0.035 * whatIfWindSpeed * Math.cos(windRad);
+
+    const netSpeedMs = Math.sqrt(u_drift * u_drift + v_drift * v_drift);
+    const netSpeedKts = netSpeedMs * 1.94384;
+    let netHeadingDeg = (Math.atan2(u_drift, v_drift) * 180) / Math.PI;
+    if (netHeadingDeg < 0) netHeadingDeg += 360;
+
+    // 24-hour Projected Area (km²)
+    const baselineArea = 14.2;
+    const windSpreadMultiplier = 1 + (whatIfWindSpeed - 5.1) * 0.06;
+    const boomContainmentReduction = (whatIfBoomLength / 5000) * 0.35;
+    const dispersantReduction = whatIfChemicalDispersant ? 0.22 : 0.0;
+    const delayExpansion = (whatIfDispatchDelayHours / 12) * 0.4;
+
+    const netAreaMultiplier = Math.max(0.4, windSpreadMultiplier + delayExpansion - boomContainmentReduction - dispersantReduction);
+    const projectedArea24h = baselineArea * 1.35 * netAreaMultiplier;
+
+    // Landfall ETA (Hours to 38km shoreline)
+    const distanceToCoastKm = 38.0;
+    const netSpeedKmh = netSpeedKts * 1.852;
+    const landfallEtaHours = Math.max(4.0, distanceToCoastKm / Math.max(0.5, netSpeedKmh));
+
+    // Estimated Clean-Up Cost (Crores INR)
+    const costPerKm2 = 2.4; // Crores INR per km²
+    const estimatedCostCr = (projectedArea24h * costPerKm2).toFixed(1);
+
+    // Baseline stats for direct side-by-side comparison
+    const baselineSpeedKts = 1.4;
+    const baselineHeadingDeg = 128;
+    const baselineProjectedArea24h = 19.8;
+    const baselineLandfallEta = 26.5;
+    const baselineCostCr = "47.5";
+
+    return {
+      netSpeedKts,
+      netHeadingDeg,
+      projectedArea24h,
+      landfallEtaHours,
+      estimatedCostCr,
+      baselineSpeedKts,
+      baselineHeadingDeg,
+      baselineProjectedArea24h,
+      baselineLandfallEta,
+      baselineCostCr,
+      targetSector: netHeadingDeg > 100 && netHeadingDeg < 170 ? "Alibaug & Murud Coastline" : "Mumbai Harbor & Elephanta Gateway",
+      riskLevel: landfallEtaHours < 16 ? "CRITICAL ESCALATION" : landfallEtaHours < 24 ? "HIGH PRIORITY" : "MODERATE ADVECTION",
+    };
+  }, [
+    whatIfWindSpeed,
+    whatIfWindDir,
+    whatIfCurrentSpeed,
+    whatIfBoomLength,
+    whatIfDispatchDelayHours,
+    whatIfChemicalDispersant,
+  ]);
+
+  // --------------------------------------------------------------------------
+  // DYNAMIC COMPUTATIONS: ENVIRONMENTAL IMPACT ANALYSIS
+  // --------------------------------------------------------------------------
+  const environmentalImpactOutput = useMemo(() => {
+    const hours = envTimelineOffsetHours;
+    const areaScale = whatIfScenarioOutput.projectedArea24h / 19.8;
+    const speedKmh = whatIfScenarioOutput.netSpeedKts * 1.852;
+
+    // Dynamic slick area and affected exposure footprint
+    const coreSlickAreaKm2 = Number((14.2 + hours * 0.42 * areaScale).toFixed(1));
+    const totalExposureAreaKm2 = Number((276.0 + hours * 5.1 * areaScale).toFixed(1));
+
+    // Proximity to closest shoreline
+    const distToCoastKm = Math.max(0, Number((38.0 - hours * speedKmh * 0.85).toFixed(1)));
+    const shorelineExposureKm = Number((18.5 + (hours / 48) * 24.2 * areaScale).toFixed(1));
+
+    // Number of affected MPAs / protected zones at this timestep
+    const affectedZonesCount = hours >= 24 ? 5 : hours >= 12 ? 4 : hours >= 6 ? 3 : 2;
+
+    // Component Scores for Environmental Impact Formula
+    const marineExposureScore = Math.min(100, (totalExposureAreaKm2 / 450) * 100);
+    const coastalProximityScore = Math.max(20, Math.min(100, 100 - (distToCoastKm / 38.0) * 80));
+    const mpaVulnerabilityScore = Math.min(100, affectedZonesCount * 19.5);
+    const fisheriesImpactScore = Math.min(100, 68 + hours * 0.6 * areaScale);
+    const waterQualityPahScore = Math.max(40, Math.min(100, 92 - hours * 0.4));
+
+    // Overall Environmental Impact Score (0-100)
+    const overallEnvScore = Number(
+      (
+        marineExposureScore * 0.2 +
+        coastalProximityScore * 0.25 +
+        mpaVulnerabilityScore * 0.25 +
+        fisheriesImpactScore * 0.15 +
+        waterQualityPahScore * 0.15
+      ).toFixed(1)
+    );
+
+    const riskTier =
+      overallEnvScore >= 80
+        ? "CRITICAL ECOLOGICAL THREAT"
+        : overallEnvScore >= 60
+        ? "HIGH VULNERABILITY"
+        : "MODERATE CONTAMINATION";
+
+    // Dynamic environmental explanation points
+    const envExplanationPoints = [
+      {
+        title: "Mangrove Prop-Root Asphyxiation Hazard",
+        status: distToCoastKm < 15 ? "CRITICAL (LANDFALL IMMINENT)" : "HIGH (ADVECTING EASTWARD)",
+        score: Math.round(coastalProximityScore),
+        detail: `Slick centroid is ${distToCoastKm} km from Alibaug mangrove nurseries. Emulsified heavy hydrocarbon can coat pneumatophores causing respiratory failure.`,
+      },
+      {
+        title: "Sea Turtle Nesting Shoreline Exposure",
+        status: "ELEVATED RISK",
+        score: Math.round(mpaVulnerabilityScore),
+        detail: `Murud & Kashid beach sands lie in the direct ${Math.round(whatIfScenarioOutput.netHeadingDeg)}° forecast corridor, threatening hatching cycles and intertidal nesting zones.`,
+      },
+      {
+        title: "Commercial Fisheries Catch Contamination",
+        status: "ACTIVE BAN RECOMMENDED",
+        score: Math.round(fisheriesImpactScore),
+        detail: `420 artisanal trawlers in Sassoon Docks / Alibaug corridor face immediate catch bans due to dissolved aromatic hydrocarbon taint.`,
+      },
+      {
+        title: "Water Column PAH Toxicity & Damping",
+        status: "CONFIRMED (Δσ⁰ = -7.8 dB)",
+        score: Math.round(waterQualityPahScore),
+        detail: `Dissolved Polycyclic Aromatic Hydrocarbons exceed CPCB marine water quality thresholds (EPA Tier-1 exceeded).`,
+      },
+    ];
+
+    return {
+      coreSlickAreaKm2,
+      totalExposureAreaKm2,
+      distToCoastKm,
+      shorelineExposureKm,
+      affectedZonesCount,
+      marineExposureScore,
+      coastalProximityScore,
+      mpaVulnerabilityScore,
+      fisheriesImpactScore,
+      waterQualityPahScore,
+      overallEnvScore,
+      riskTier,
+      envExplanationPoints,
+    };
+  }, [envTimelineOffsetHours, whatIfScenarioOutput]);
+
+  // --------------------------------------------------------------------------
+  // DYNAMIC COMPUTATIONS: ECONOMIC & COST IMPACT ANALYSIS
+  // --------------------------------------------------------------------------
+  const economicImpactOutput = useMemo(() => {
+    const areaScale = whatIfScenarioOutput.projectedArea24h / 19.8;
+    const delayHours = whatIfDispatchDelayHours;
+    const boomMeters = whatIfBoomLength;
+    const dispersant = whatIfChemicalDispersant;
+
+    // 1. Direct Response Expenditures (Crores INR)
+    const vesselDeploymentCostCr = Number((8.5 + delayHours * 0.8).toFixed(2));
+    const boomDeploymentCostCr = Number(((boomMeters / 1000) * 1.6).toFixed(2));
+    const dispersantCostCr = dispersant ? 4.2 : 0.0;
+    const wasteSludgeDisposalCostCr = Number((6.8 * areaScale).toFixed(2));
+    const totalDirectResponseCostCr = Number(
+      (
+        vesselDeploymentCostCr +
+        boomDeploymentCostCr +
+        dispersantCostCr +
+        wasteSludgeDisposalCostCr
+      ).toFixed(2)
+    );
+
+    // 2. Environmental Restoration Cost (Crores INR)
+    const mangroveRemediationCostCr = Number((14.5 * areaScale).toFixed(2));
+    const beachSedimentFlushingCostCr = Number((5.8 * areaScale).toFixed(2));
+    const postSpillEcologicalMonitoringCr = 3.5;
+    const totalRestorationCostCr = Number(
+      (
+        mangroveRemediationCostCr +
+        beachSedimentFlushingCostCr +
+        postSpillEcologicalMonitoringCr
+      ).toFixed(2)
+    );
+
+    // 3. Potential Economic Loss Ranges (Crores INR)
+    const fisheriesLossMinCr = Number((12.0 * areaScale).toFixed(1));
+    const fisheriesLossMaxCr = Number((18.5 * areaScale).toFixed(1));
+    const portDelayLossMinCr = 6.0;
+    const portDelayLossMaxCr = 12.0;
+    const tourismLossMinCr = Number((3.5 * areaScale).toFixed(1));
+    const tourismLossMaxCr = Number((6.5 * areaScale).toFixed(1));
+    const totalEconomicLossMinCr = Number(
+      (fisheriesLossMinCr + portDelayLossMinCr + tourismLossMinCr).toFixed(1)
+    );
+    const totalEconomicLossMaxCr = Number(
+      (fisheriesLossMaxCr + portDelayLossMaxCr + tourismLossMaxCr).toFixed(1)
+    );
+
+    // Grand Total Estimated Impact
+    const grandTotalMinCr = Number(
+      (
+        totalDirectResponseCostCr +
+        totalRestorationCostCr +
+        totalEconomicLossMinCr
+      ).toFixed(1)
+    );
+    const grandTotalMaxCr = Number(
+      (
+        totalDirectResponseCostCr +
+        totalRestorationCostCr +
+        totalEconomicLossMaxCr
+      ).toFixed(1)
+    );
+
+    // Cost Avoided by Early Response vs 8-hour delay scenario
+    const delayed8hTotalCr = Number((grandTotalMaxCr * 1.65).toFixed(1));
+    const costAvoidedCr = Number((delayed8hTotalCr - grandTotalMinCr).toFixed(1));
+
+    // 4-Scenario Cost Model Table Data
+    const costScenarios = [
+      {
+        scenario: "Immediate Containment (T + 0h)",
+        tag: "Recommended Plan",
+        tagColor: "bg-emerald-100 text-emerald-800 border-emerald-200",
+        directResponseCr: "₹14.5 Cr",
+        restorationCr: "₹12.0 Cr",
+        economicLossCr: "₹11.5 - ₹16.0 Cr",
+        totalCostCr: "₹38.0 - ₹42.5 Cr",
+        costDifferential: "- ₹28.5 Cr (Savings)",
+        diffColor: "text-emerald-700 font-bold",
+      },
+      {
+        scenario: "Baseline Reality (Current T + 2h)",
+        tag: "Active Status",
+        tagColor: "bg-sky-100 text-sky-800 border-sky-200",
+        directResponseCr: `₹${totalDirectResponseCostCr} Cr`,
+        restorationCr: `₹${totalRestorationCostCr} Cr`,
+        economicLossCr: `₹${totalEconomicLossMinCr} - ₹${totalEconomicLossMaxCr} Cr`,
+        totalCostCr: `₹${grandTotalMinCr} - ₹${grandTotalMaxCr} Cr`,
+        costDifferential: "Baseline Datum",
+        diffColor: "text-slate-700 font-bold",
+      },
+      {
+        scenario: "Delayed Mobilization (T + 6h)",
+        tag: "High Penalty",
+        tagColor: "bg-amber-100 text-amber-800 border-amber-200",
+        directResponseCr: "₹34.8 Cr",
+        restorationCr: "₹38.5 Cr",
+        economicLossCr: "₹32.0 - ₹46.0 Cr",
+        totalCostCr: "₹105.3 - ₹119.3 Cr",
+        costDifferential: "+ ₹56.8 Cr (Loss)",
+        diffColor: "text-amber-700 font-bold",
+      },
+      {
+        scenario: "Major Breached Spill (High Wind)",
+        tag: "Worst-Case Escalation",
+        tagColor: "bg-rose-100 text-rose-800 border-rose-200",
+        directResponseCr: "₹52.0 Cr",
+        restorationCr: "₹58.0 Cr",
+        economicLossCr: "₹55.0 - ₹82.0 Cr",
+        totalCostCr: "₹165.0 - ₹192.0 Cr",
+        costDifferential: "+ ₹115.0 Cr (Extreme)",
+        diffColor: "text-rose-700 font-bold",
+      },
+    ];
+
+    // Cost by Response Category Bar Chart Data
+    const costBreakdownChartData = [
+      { category: "Skimming & PCVs", cost: vesselDeploymentCostCr, fill: "#1E5FBF" },
+      { category: "Containment Boom", cost: boomDeploymentCostCr, fill: "#0EA5E9" },
+      { category: "Dispersants", cost: dispersantCostCr, fill: "#10B981" },
+      { category: "Sludge Disposal", cost: wasteSludgeDisposalCostCr, fill: "#F59E0B" },
+      { category: "Mangrove Restore", cost: mangroveRemediationCostCr, fill: "#84CC16" },
+      { category: "Fishery Compensation", cost: Number(((fisheriesLossMinCr + fisheriesLossMaxCr) / 2).toFixed(1)), fill: "#EF4444" },
+      { category: "Port Demurrage", cost: Number(((portDelayLossMinCr + portDelayLossMaxCr) / 2).toFixed(1)), fill: "#8B5CF6" },
+    ];
+
+    // Exponential Cost vs Delay Curve Data
+    const delayCurveData = [
+      { delay: "0h (Immediate)", cost: 40.2, cleanupDays: 7, areaKm2: 14.2 },
+      { delay: "2h (Baseline)", cost: Number(((grandTotalMinCr + grandTotalMaxCr) / 2).toFixed(1)), cleanupDays: 14, areaKm2: 19.8 },
+      { delay: "4h", cost: 84.5, cleanupDays: 22, areaKm2: 28.5 },
+      { delay: "6h", cost: 112.3, cleanupDays: 35, areaKm2: 38.0 },
+      { delay: "8h (Severe Lag)", cost: 148.0, cleanupDays: 48, areaKm2: 52.4 },
+    ];
+
+    return {
+      vesselDeploymentCostCr,
+      boomDeploymentCostCr,
+      dispersantCostCr,
+      wasteSludgeDisposalCostCr,
+      totalDirectResponseCostCr,
+      totalRestorationCostCr,
+      totalEconomicLossMinCr,
+      totalEconomicLossMaxCr,
+      grandTotalMinCr,
+      grandTotalMaxCr,
+      costAvoidedCr,
+      costScenarios,
+      costBreakdownChartData,
+      delayCurveData,
+    };
+  }, [
+    whatIfScenarioOutput,
+    whatIfDispatchDelayHours,
+    whatIfBoomLength,
+    whatIfChemicalDispersant,
+  ]);
+
+  // --------------------------------------------------------------------------
+  // MODEL CONFIDENCE BREAKDOWN MATRIX (Multi-Dimensional Radar Data)
+  // --------------------------------------------------------------------------
+  const modelConfidenceBreakdown = useMemo(() => {
+    const isTop = selectedCandidate.rank === 1;
+    const score = lagrangianOutput.computedAttribution;
+
+    const timeMatch = isTop ? Math.max(65, 99.4 - Math.abs(releaseTimeOffsetHours + 18) * 2.5) : 38;
+    const routeAlignment = isTop ? 98.2 : selectedCandidate.rank === 2 ? 41.5 : 35.0;
+    const spatialOverlap = lagrangianOutput.spatialIoU;
+    const aisConsistency = isTop ? 97.2 : selectedCandidate.rank === 2 ? 88.0 : 42.0;
+    const physicsMatch = isTop ? Math.max(60, 94.7 - Math.abs(windageFactor - 0.035) * 500) : 35.0;
+    const speedDropAnomaly = isTop ? 98.5 : 18.4;
+    const environmentalFit = Math.max(60, 92.0 - Math.abs(currentScalar - 1.0) * 20);
+
+    const radarData = [
+      { metric: "Time Match", candidate: timeMatch, baseline: 85, benchmark: 90 },
+      { metric: "Route Alignment", candidate: routeAlignment, baseline: 75, benchmark: 85 },
+      { metric: "Spatial Overlap", candidate: spatialOverlap, baseline: 70, benchmark: 80 },
+      { metric: "AIS Continuity", candidate: aisConsistency, baseline: 65, benchmark: 75 },
+      { metric: "Physics Match", candidate: physicsMatch, baseline: 80, benchmark: 88 },
+      { metric: "Kinematic Anomaly", candidate: speedDropAnomaly, baseline: 60, benchmark: 70 },
+      { metric: "Environmental Fit", candidate: environmentalFit, baseline: 85, benchmark: 92 },
+    ];
+
+    const overallConfidence = (
+      timeMatch * 0.2 +
+      routeAlignment * 0.15 +
+      spatialOverlap * 0.2 +
+      aisConsistency * 0.15 +
+      physicsMatch * 0.15 +
+      speedDropAnomaly * 0.15
+    ).toFixed(1);
+
+    return { radarData, overallConfidence };
+  }, [
+    selectedCandidate,
+    lagrangianOutput,
+    releaseTimeOffsetHours,
+    windageFactor,
+    currentScalar,
+  ]);
+
+  // Hourly What-If Simulation Comparison Chart
+  const hourlySimulationComparisonData = useMemo(() => {
+    const hours = [0, 6, 12, 18, 24, 30, 36, 42, 48];
+    return hours.map((h) => {
+      const baseArea = 14.2 + h * 0.35;
+      const whatIfArea = 14.2 + h * (whatIfScenarioOutput.projectedArea24h / 48) * (h > 12 ? 1.1 : 0.9);
+      const baseDistance = Math.max(0, 38.0 - h * (1.4 * 1.852));
+      const whatIfDistance = Math.max(0, 38.0 - h * (whatIfScenarioOutput.netSpeedKts * 1.852));
+      return {
+        hour: `+${h}h`,
+        baselineArea: Number(baseArea.toFixed(1)),
+        whatIfArea: Number(whatIfArea.toFixed(1)),
+        baselineDistance: Number(baseDistance.toFixed(1)),
+        whatIfDistance: Number(whatIfDistance.toFixed(1)),
+      };
     });
+  }, [whatIfScenarioOutput]);
+
+  // Trigger recalculation toast indicator when tuning inputs change
+  const triggerRecalculateFeedback = () => {
+    setIsRecalculating(true);
+    setTimeout(() => setIsRecalculating(false), 300);
   };
 
-  const handleDownloadCustomPdf = async () => {
-    setIsExportingPdf(true);
-    try {
-      const pdfBlob = await generateClientEvidenceBriefPdf({
-        vesselName: selectedCandidate.name,
-        vesselType: selectedCandidate.type,
-        flag: selectedCandidate.flag,
-        imo: selectedCandidate.imo,
-        mmsi: "636019842",
-        builtYear: "2018",
-        speedKts: parseFloat(selectedCandidate.currentSpeed) || 1.4,
-        headingDeg: parseInt(selectedCandidate.course) || 312,
-        overallScore: selectedCandidate.score,
-        cpaKm: parseFloat(selectedCandidate.cpa) || 27.46,
-        darkDuration: selectedCandidate.aisGap,
-        hindcastMatch: `${liveCorrelation.match}% IoU`,
-        anomalyLevel: selectedCandidate.rank === 1 ? "CRITICAL (Severe AIS Disconnect)" : "LOW (Standard Transit)",
-        dimensions: candidateEvidenceData.map((d) => ({ name: d.name, score: d.score, color: d.color })),
-        incidentCode: "IN-MH-2026",
-        incidentTitle: "Mumbai High Offshore Slick IN-MH-2026",
-        incidentRegion: "Arabian Sea / West Coast Indian EEZ",
-        spillAreaKm2: 276.04,
-        severityScore: 82,
-        detectionSensor: "Copernicus Sentinel-1A C-band IW",
-        investigatingAgency: "Indian Coast Guard & Ministry of Defence (MDA)",
-        counterfactualExecuted: true,
-        counterfactualScore: parseFloat(liveCorrelation.match),
-      });
+  // Map candidate vessels for IncidentMiniMap
+  const dynamicMapVessels: MapVesselCandidate[] = useMemo(() => {
+    return candidates.map((c) => ({
+      id: c.id,
+      name: c.name,
+      rank: c.rank,
+      score: c.id === selectedCandidate.id ? lagrangianOutput.computedAttribution : c.score,
+      coords: (c.id === "vessel-1" ? [18.78, 72.51] : c.id === "vessel-2" ? [18.52, 72.84] : c.id === "vessel-3" ? [18.61, 72.15] : [19.12, 72.95]) as [number, number],
+      heading: c.id === "vessel-1" ? 312 : c.id === "vessel-2" ? 148 : c.id === "vessel-3" ? 180 : 45,
+      speed: parseFloat(c.minSog) || 3.4,
+      type: c.type,
+      flag: c.flag,
+      imo: c.imo,
+    }));
+  }, [candidates, selectedCandidate, lagrangianOutput]);
 
-      const url = URL.createObjectURL(pdfBlob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `ICG_Forensic_Dossier_IN-MH-2026_${selectedCandidate.name.replace(/[\s/]+/g, "_")}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      triggerToast(`Official 9-Page Dossier downloaded for ${selectedCandidate.name}!`);
-    } catch (err) {
-      console.error("PDF generation failed:", err);
-      triggerToast("Error generating PDF. Launching report pipeline...");
-      setShowReportModal(true);
-    } finally {
-      setIsExportingPdf(false);
-    }
-  };
+  // Coast Guard responding assets for map
+  const dynamicMapAssets: MapCoastGuardAsset[] = useMemo(() => {
+    return [
+      { id: "cg-1", name: "ICGS Samudra Prahari", asset_type: "Pollution Control Vessel", coordinates: [18.82, 72.45], status: "En Route Containment" },
+      { id: "cg-2", name: "ICGS Sankalp", asset_type: "Offshore Patrol Vessel", coordinates: [18.55, 72.62], status: "On Station" },
+    ];
+  }, []);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-sky-canvas font-sans text-slate-800 flex flex-col antialiased">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed top-20 right-8 z-50 animate-bounce">
-          <div className="bg-[#0B2545] text-white px-4 py-2.5 rounded-xl shadow-2xl border border-sky-400/40 text-xs font-semibold flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>{toastMessage}</span>
-          </div>
-        </div>
-      )}
-
+    <div className="flex h-screen bg-[#F0F7FD] font-body text-slate-800 antialiased overflow-hidden selection:bg-[#1E5FBF]/20 selection:text-[#0B2545]">
       {/* ===================================================================== */}
-      {/* TOP HEADER BAR                                                        */}
+      {/* 1. LEFT SIDEBAR NAVIGATION                                            */}
       {/* ===================================================================== */}
-      <header className="h-16 bg-white/95 backdrop-blur-md border-b border-[#E1EEF9] z-40 flex items-center justify-between px-4 sm:px-6 shadow-xs shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-            title="Toggle Sidebar"
+      <aside
+        id="analysis-sidebar"
+        className={`h-full bg-gradient-to-b from-[#0B2545] to-[#123A66] flex flex-col justify-between items-center z-30 shrink-0 shadow-xl transition-all duration-300 ease-in-out ${
+          isSidebarOpen
+            ? "w-16 sm:w-20 py-4 opacity-100 translate-x-0 overflow-y-auto"
+            : "w-0 p-0 opacity-0 -translate-x-full overflow-hidden pointer-events-none"
+        }`}
+      >
+        <div className="flex flex-col items-center gap-3 w-full px-2">
+          {/* Sahayya Logo / Brand Icon */}
+          <div
+            onClick={() => navigate("/dashboard")}
+            className="w-11 h-11 rounded-2xl p-1 bg-white/10 backdrop-blur-md border border-white/20 shadow-md flex items-center justify-center transition-transform hover:scale-105 cursor-pointer mb-2"
+            title="Return to Dashboard"
           >
-            <Menu className="w-5 h-5" />
-          </button>
-
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#0B2545] to-[#1E5FBF] flex items-center justify-center text-white shadow-sm font-black text-base">
-              S
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-display font-bold text-[#0B2545] text-base tracking-[0.14em] leading-none">
-                  SAHAYYA
-                </span>
-                <span className="text-[10px] font-semibold px-1.5 py-0.2 bg-sky-100 text-[#1E5FBF] rounded-sm uppercase tracking-wider font-body badge-text">
-                  Analysis Lab
-                </span>
-              </div>
-              <div className="text-[10px] text-slate-500 font-normal leading-tight font-body">
-                Forensic Attribution Engine &amp; Predictive Response Optimization
-              </div>
-            </div>
+            <img src="/sahayya-logo.png" alt="Sahayya" className="w-full h-full object-contain" />
           </div>
-        </div>
 
-        <div className="flex items-center gap-3 font-body">
-          {/* Active Candidate Badge */}
-          <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-            <span className="text-slate-400">Attribution Subject:</span>
-            <span
-              className="font-bold flex items-center gap-1.5"
-              style={{ color: VESSEL_COLORS[selectedCandidate.id]?.primary || "#E11D48" }}
+          {[
+            { id: "Dashboard", icon: Home, labelKey: "nav.home", fallback: "Home", path: "/dashboard" },
+            { id: "Map", icon: MapIcon, labelKey: "nav.map", fallback: "Map", path: "/map" },
+            { id: "Incidents", icon: Activity, labelKey: "nav.incidents", fallback: "Incidents", path: "/incidents/IN-MH-2026" },
+            { id: "Vessels", icon: Ship, labelKey: "nav.vessels", fallback: "Vessels", path: "/vessels" },
+            { id: "Analysis", icon: BarChart3, labelKey: "nav.analysis", fallback: "Analysis", path: "/analysis" },
+            { id: "Authority", icon: Send, labelKey: "nav.authority", fallback: "Submit to Authority", path: "/authority" },
+            { id: "Settings", icon: Settings, labelKey: "nav.settings", fallback: "Settings", path: "/settings" },
+            { id: "Help", icon: HelpCircle, labelKey: "nav.help", fallback: "Help", path: "/help" },
+          ].map((item) => {
+            const Icon = item.icon;
+            const isActive = activeNav === item.id;
+            const label = t(item.labelKey, item.fallback);
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setActiveNav(item.id);
+                  navigate(item.path);
+                }}
+                className={`w-full py-2.5 rounded-xl flex flex-col items-center justify-center gap-1 transition-all cursor-pointer relative ${
+                  isActive
+                    ? "bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] text-white shadow-md shadow-blue-950/40"
+                    : "text-slate-300 hover:text-white hover:bg-white/10"
+                }`}
+                title={label}
+              >
+                <Icon className="w-5 h-5" />
+                <span className="text-[10px] font-medium font-body truncate max-w-[56px]">{label}</span>
+                {isActive && (
+                  <span className="absolute -left-1 top-1/2 -translate-y-1/2 w-1.5 h-6 bg-sky-300 rounded-r-full shadow-xs" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </aside>
+
+      {/* ===================================================================== */}
+      {/* 2. MAIN ANALYSIS WORKSTATION CANVAS                                   */}
+      {/* ===================================================================== */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
+        {/* TOP COMMAND & PIPELINE HEADER */}
+        <header className="h-16 bg-white border-b border-[#E1EEF9] px-6 flex items-center justify-between shrink-0 shadow-xs z-20">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-2 rounded-xl text-slate-500 hover:text-[#0B2545] hover:bg-[#F8FBFE] border border-[#E1EEF9] transition-colors cursor-pointer"
+              title="Toggle Sidebar"
             >
-              <Ship className="w-3.5 h-3.5" />
-              {selectedCandidate.name} ({selectedCandidate.score}%)
-            </span>
+              <Layers className="w-4 h-4" />
+            </button>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-base font-bold text-[#0B2545] font-display tracking-tight flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-[#1E5FBF]" />
+                  <span>{t("analysis.title", "Forensic Attribution & Scenario Lab")}</span>
+                </h1>
+                <span className="text-[10px] uppercase font-bold font-mono px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
+                  IN-MH-2026 Live
+                </span>
+                {isRecalculating && (
+                  <span className="text-[10px] font-mono text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 animate-pulse">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    Recalculating analysis...
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 font-body hidden sm:block">
+                {t("analysis.subtitle", "Flowchart Stages 11, 12, 18 • Probabilistic vessel attribution and Lagrangian hydrodynamic modeling.")}
+              </p>
+            </div>
           </div>
 
-          <button
-            onClick={() => setShowReportModal(true)}
-            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white text-xs font-semibold flex items-center gap-2 shadow-sm transition-all cursor-pointer btn-text"
-            title="Generate Official 9-Page Incident Forensic Dossier (PDF)"
-          >
-            <FileText className="w-4 h-4 text-sky-200" />
-            <span>Generate Report</span>
-          </button>
+          <div className="flex items-center gap-2.5">
+            {/* Multi-Language Selector */}
+            <LanguageSwitcher variant="light" />
 
-          <button
-            onClick={() => navigate("/incidents/IN-MH-2026")}
-            className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE] hover:bg-slate-50 text-xs font-semibold text-slate-700 flex items-center gap-1.5 cursor-pointer btn-text"
-          >
-            <Activity className="w-3.5 h-3.5 text-rose-600" />
-            <span>Active Case: <span className="font-mono">IN-MH-2026</span></span>
-          </button>
-        </div>
-      </header>
+            <button
+              onClick={() => {
+                setReleaseTimeOffsetHours(-18.0);
+                setWindageFactor(0.035);
+                setCurrentScalar(1.0);
+                triggerToast("Reset parameters to baseline satellite/buoy telemetry.");
+              }}
+              className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] bg-white hover:bg-[#F8FBFE] text-xs font-semibold text-slate-700 flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              title="Restore baseline satellite & buoy parameters"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+              <span>{t("action.resetBaseline", "Reset Baseline")}</span>
+            </button>
 
-      {/* ===================================================================== */}
-      {/* MAIN CONTAINER: SIDEBAR + ANALYSIS TABS                               */}
-      {/* ===================================================================== */}
-      <div className="flex-1 min-h-0 flex w-full overflow-hidden relative">
-        {/* Left Nav Sidebar */}
-        <aside
-          className={`h-full bg-[#0B2545] transition-all duration-300 flex flex-col justify-between py-4 z-30 shrink-0 overflow-y-auto ${
-            isSidebarOpen ? "w-20" : "w-0 p-0 opacity-0 -translate-x-full overflow-hidden pointer-events-none"
-          }`}
-        >
-          <div className="flex flex-col items-center gap-2.5 w-full px-2">
+            <button
+              onClick={() => setShowReportModal(true)}
+              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white text-xs font-bold font-body flex items-center gap-1.5 shadow-md hover:shadow-lg transition-all cursor-pointer"
+              title="Generate certified forensic analysis report in PDF format"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>{t("action.generateAnalysisReport", "Generate Analysis Report")}</span>
+            </button>
+          </div>
+        </header>
+
+        {/* SUB-HEADER: LIVE DATA PIPELINE STATUS & WORKSPACE SUB-TABS */}
+        <div className="bg-[#F8FBFE] border-b border-[#E1EEF9] px-6 py-2.5 flex items-center justify-between flex-wrap gap-3 shrink-0 font-body">
+          {/* Workstation Sub-Tabs */}
+          <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
             {[
-              { id: "Home", icon: Home, label: "Home", path: "/dashboard" },
-              { id: "Map", icon: MapIcon, label: "Map", path: "/map" },
-              { id: "Incidents", icon: Activity, label: "Incidents", path: "/incidents/IN-MH-2026" },
-              { id: "Vessels", icon: Ship, label: "Vessels", path: "/vessels" },
-              { id: "Analysis", icon: BarChart3, label: "Analysis", path: "/analysis" },
-              { id: "Settings", icon: Settings, label: "Settings", path: "/settings" },
-              { id: "Help", icon: HelpCircle, label: "Help", path: "" },
-            ].map((item) => {
-              const Icon = item.icon;
-              const isActive = activeNav === item.id;
+              { id: "pipeline", label: t("analysis.tabs.originLab", "Oil Spill Origin & Forensic Lab"), icon: Compass },
+              { id: "whatif", label: t("analysis.tabs.whatif", "What-If Hydrodynamic Simulator"), icon: Sliders },
+              { id: "environmental", label: t("analysis.tabs.environmental", "Environmental Impact Analysis"), icon: Leaf },
+              { id: "economic", label: t("analysis.tabs.economic", "Economic & Cost Impact Analysis"), icon: IndianRupee },
+              { id: "confidence", label: t("analysis.tabs.confidence", "Model Confidence & Attribution Matrix"), icon: Target },
+              { id: "historical", label: t("analysis.tabs.historical", "Historical Analogue Benchmarking"), icon: History },
+              { id: "traceability", label: t("analysis.tabs.traceability", "Evidence Traceability & Chain of Custody"), icon: ShieldCheck },
+            ].map((tab) => {
+              const TabIcon = tab.icon;
+              const isActive = activeTab === tab.id;
               return (
                 <button
-                  key={item.id}
+                  key={tab.id}
                   onClick={() => {
-                    setActiveNav(item.id);
-                    if (item.path) {
-                      navigate(item.path);
-                    }
+                    setActiveTab(tab.id as any);
+                    setSearchParams({ tab: tab.id, vessel: selectedCandidate.name });
                   }}
-                  className={`flex flex-col items-center justify-center w-14 h-12 rounded-2xl transition-all cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
                     isActive
-                      ? "bg-gradient-to-b from-[#1E5FBF] to-[#2E8FE8] text-white shadow-lg scale-105"
-                      : "text-slate-300 hover:text-white hover:bg-white/10"
+                      ? "bg-[#0B2545] text-white shadow-xs"
+                      : "text-slate-600 hover:bg-[#E1EEF9] hover:text-[#0B2545]"
                   }`}
-                  title={item.label}
                 >
-                  <Icon className="w-5 h-5 stroke-[1.8]" />
-                  <span className="text-[9px] font-medium tracking-tight font-body">{item.label}</span>
+                  <TabIcon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="px-1 text-center font-body">
-            <div className="w-6 h-6 mx-auto mb-1 text-sky-400 opacity-60">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M2 12c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" />
-              </svg>
-            </div>
-            <p className="text-[8px] text-slate-400 leading-tight">
-              Safer Oceans.<br />Stronger Tomorrow.
-            </p>
+          {/* Real-Time Telemetry Feed Indicators */}
+          <div className="flex items-center gap-3 text-[11px] font-mono text-slate-500">
+            <span className="flex items-center gap-1 text-emerald-600 font-semibold">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              Lagrangian Kernel: 5,000 Particles
+            </span>
+            <span>&bull;</span>
+            <span className="text-slate-600">
+              Wind: <strong className="text-[#1E5FBF]">5.1 m/s @ 289°</strong> &bull; Current: <strong className="text-[#0EA5B7]">0.67 m/s</strong>
+            </span>
           </div>
-        </aside>
+        </div>
 
-        {/* Scrollable Main Area */}
-        <main className="flex-1 min-h-0 h-full overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 custom-tactical-scrollbar scroll-smooth">
-          <div className="max-w-6xl mx-auto space-y-6 pb-20">
-            {/* Top Title & Tab Row */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h1 className="heading-page text-[#0B2545]">
-                  Forensic Attribution &amp; Scenario Lab
-                </h1>
-                <p className="body-description text-sm sm:text-[15px] text-slate-600 mt-1 font-body leading-relaxed">
-                  Flowchart Stages 11, 12, 18 &bull; Probabilistic vessel attribution and Lagrangian hydrodynamic modeling.
-                </p>
-              </div>
-
-              {/* 5 Primary Tabs */}
-              <div className="flex items-center gap-1.5 p-1.5 bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-sm flex-wrap sm:flex-nowrap font-body">
-                {[
-                  { id: "counterfactual", label: "Counterfactual Lab", icon: GitCompare, badge: "Stage 12" },
-                  { id: "whatif", label: "What-If Simulator", icon: Sliders, badge: "Stage 18" },
-                  { id: "confidence", label: "Model Confidence", icon: Brain },
-                  { id: "historical", label: "Historical Benchmarking", icon: History },
-                  { id: "reports", label: "Executive Reports", icon: FileText, badge: "Dossier" },
-                ].map((tab) => {
-                  const Icon = tab.icon;
-                  const isSel = activeTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id as AnalysisTab)}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer btn-text ${
-                        isSel
-                          ? "bg-[#0B2545] text-white shadow-sm"
-                          : "text-slate-600 hover:text-[#0B2545] hover:bg-slate-100"
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" />
-                      <span>{tab.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* =============================================================== */}
-            {/* TAB 1: COUNTERFACTUAL LAB (Stage 12)                            */}
-            {/* =============================================================== */}
-            {activeTab === "counterfactual" && (
-              <div className="space-y-5 animate-fadeIn">
-                {/* Lab Mode Toggle & Action Bar */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
-                      Simulation Mode:
-                    </span>
-                    <div className="flex items-center p-1 bg-slate-100 rounded-xl">
-                      <button
-                        onClick={() => setLabMode("single")}
-                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                          labMode === "single"
-                            ? "bg-[#0B2545] text-white shadow-xs"
-                            : "text-slate-600 hover:text-[#0B2545]"
-                        }`}
-                      >
-                        Single Vessel Deep-Dive
-                      </button>
-                      <button
-                        onClick={() => setLabMode("runAll")}
-                        className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                          labMode === "runAll"
-                            ? "bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] text-white shadow-xs"
-                            : "text-slate-600 hover:text-[#0B2545]"
-                        }`}
-                      >
-                        <Play className="w-3 h-3 fill-current" />
-                        <span>Run All (4 Candidates Side-by-Side)</span>
-                      </button>
+        {/* WORKSPACE CONTENT BODY (SCROLLABLE) */}
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+          {/* ================================================================= */}
+          {/* TAB 1: PROBABLE OIL SPILL ORIGIN & COUNTERFACTUAL FORENSICS LAB   */}
+          {/* ================================================================= */}
+          {activeTab === "pipeline" && (
+            <div className="space-y-5 animate-fadeIn">
+              {/* TOP COMMAND & DYNAMIC REVERSE LAGRANGIAN CONTROL RIBBON */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#0B2545] to-[#1E5FBF] flex items-center justify-center text-white shadow-md">
+                      <Target className="w-5 h-5 text-amber-400" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 uppercase">
+                          STAGE 11 &amp; 12: ORIGIN BACK-TRACKING
+                        </span>
+                        <h2 className="text-sm sm:text-base font-bold text-[#0B2545] font-display">
+                          Probable Oil Spill Origin Detection &amp; Hindcast Engine
+                        </h2>
+                      </div>
+                      <p className="text-xs text-slate-500 font-body mt-0.5">
+                        Back-tracking 5,000 Lagrangian particles driven by INCOIS ocean currents and ECMWF 10m wind fields to determine the release origin.
+                      </p>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={handleRunSimulation}
-                      disabled={isSimulating}
-                      className="px-3.5 py-1.5 rounded-xl bg-[#0B2545] hover:bg-[#123A66] text-white text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
+                      onClick={() => {
+                        setReleaseTimeOffsetHours(-18.0);
+                        setOriginWindSpeedKts(14.2);
+                        setOriginWindDirDeg(289);
+                        setOriginCurrentSpeedKts(0.82);
+                        setOriginCurrentDirDeg(68);
+                        setDiffusionCoefficient(10.0);
+                        triggerToast("Reset origin model to baseline satellite & buoy parameters.");
+                      }}
+                      className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title="Reset parameters to baseline"
                     >
-                      <RotateCcw className={`w-3.5 h-3.5 ${isSimulating ? "animate-spin" : ""}`} />
-                      <span>{isSimulating ? "Re-running Lagrangian Hindcast..." : "Re-run Hydrodynamics"}</span>
+                      <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Reset Model</span>
+                    </button>
+                    <button
+                      onClick={() => setShowReportModal(true)}
+                      className="px-3.5 py-1.5 rounded-xl bg-[#0B2545] hover:bg-[#143966] text-white text-xs font-bold font-body flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                      title="Export comprehensive origin analysis PDF dossier"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Generate Origin Analysis Report</span>
                     </button>
                   </div>
                 </div>
 
-                {/* ------------------------------------------------------------- */}
-                {/* RUN ALL (4) CANDIDATES COMPARATIVE GRID VIEW                   */}
-                {/* ------------------------------------------------------------- */}
-                {labMode === "runAll" ? (
-                  <div className="space-y-4">
-                    <div className="p-3 bg-gradient-to-r from-[#0B2545] to-[#1E5FBF] text-white rounded-2xl flex items-center justify-between shadow-sm">
-                      <div className="flex items-center gap-2 text-xs font-medium">
-                        <Sparkles className="w-4 h-4 text-amber-300" />
-                        <span>
-                          <strong>Parallel Multi-Vessel Hindcast Matrix:</strong> Lagrangian reverse-particle advection executed across all 4 AIS tracks simultaneously.
-                        </span>
-                      </div>
-                      <span className="text-[11px] font-mono text-sky-200">OpenDrift v1.9 + INCOIS Ocean Wave Coupling</span>
+                {/* DYNAMIC ENVIRONMENTAL & RELEASE-TIME CONTROLS GRID */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* Control 1: Release-Time Window */}
+                  <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="flex items-center gap-1.5 text-slate-700">
+                        <Clock className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Release Time Window:</span>
+                      </span>
+                      <span className="font-mono font-bold text-amber-600">
+                        {Math.abs(releaseTimeOffsetHours).toFixed(0)}h Prior (T{releaseTimeOffsetHours > 0 ? `+${releaseTimeOffsetHours}` : releaseTimeOffsetHours}h)
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-36.0"
+                      max="-6.0"
+                      step="1.0"
+                      value={releaseTimeOffsetHours}
+                      onChange={(e) => setReleaseTimeOffsetHours(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                    />
+                    <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                      <button onClick={() => setReleaseTimeOffsetHours(-36)} className="hover:text-slate-700">T-36h</button>
+                      <button onClick={() => setReleaseTimeOffsetHours(-24)} className="hover:text-slate-700">T-24h</button>
+                      <button onClick={() => setReleaseTimeOffsetHours(-18)} className="font-bold text-amber-600">T-18h (Opt)</button>
+                      <button onClick={() => setReleaseTimeOffsetHours(-12)} className="hover:text-slate-700">T-12h</button>
+                      <button onClick={() => setReleaseTimeOffsetHours(-6)} className="hover:text-slate-700">T-6h</button>
+                    </div>
+                  </div>
+
+                  {/* Control 2: Surface Wind Speed & Direction */}
+                  <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="flex items-center gap-1.5 text-slate-700">
+                        <Wind className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                        <span>ECMWF Wind Field:</span>
+                      </span>
+                      <span className="font-mono font-bold text-[#1E5FBF]">
+                        {originWindSpeedKts.toFixed(1)} kts @ {originWindDirDeg}°
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="2.0"
+                      max="30.0"
+                      step="0.5"
+                      value={originWindSpeedKts}
+                      onChange={(e) => setOriginWindSpeedKts(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1E5FBF]"
+                    />
+                    <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                      <span>5 kts (Calm)</span>
+                      <span>14.2 kts (Baseline)</span>
+                      <span>30 kts (Squall)</span>
+                    </div>
+                  </div>
+
+                  {/* Control 3: INCOIS Ocean Surface Current */}
+                  <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="flex items-center gap-1.5 text-slate-700">
+                        <Waves className="w-3.5 h-3.5 text-cyan-600" />
+                        <span>INCOIS Surface Current:</span>
+                      </span>
+                      <span className="font-mono font-bold text-cyan-700">
+                        {originCurrentSpeedKts.toFixed(2)} kts @ {originCurrentDirDeg}°
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="3.0"
+                      step="0.05"
+                      value={originCurrentSpeedKts}
+                      onChange={(e) => setOriginCurrentSpeedKts(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-cyan-600"
+                    />
+                    <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                      <span>0.2 kts (Slack)</span>
+                      <span>0.82 kts (Baseline)</span>
+                      <span>3.0 kts (High Tidal)</span>
+                    </div>
+                  </div>
+
+                  {/* Control 4: Turbulent Diffusion */}
+                  <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="flex items-center gap-1.5 text-slate-700">
+                        <Cpu className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Turbulent Diffusion:</span>
+                      </span>
+                      <span className="font-mono font-bold text-emerald-600">
+                        {diffusionCoefficient.toFixed(1)} m²/s
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="4.0"
+                      max="25.0"
+                      step="1.0"
+                      value={diffusionCoefficient}
+                      onChange={(e) => setDiffusionCoefficient(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                    />
+                    <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                      <span>4 m²/s (Laminar)</span>
+                      <span>10 m²/s (Standard)</span>
+                      <span>25 m²/s (Rough)</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* LIVE CALCULATED ORIGIN SUMMARY BANNER */}
+                <div className="p-3 rounded-xl bg-gradient-to-r from-amber-500/10 via-rose-500/10 to-sky-500/10 border border-amber-300/60 flex items-center justify-between flex-wrap gap-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                    <span className="text-slate-700 font-semibold">Most Probable Release Origin:</span>
+                    <strong className="font-mono text-sm text-[#0B2545] font-bold">
+                      {activeOriginSimulation.probableOrigin[0].toFixed(4)}°N, {activeOriginSimulation.probableOrigin[1].toFixed(4)}°E
+                    </strong>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-bold border border-rose-200">
+                      Zone Alpha (±{activeOriginSimulation.originConfidenceRadiusKm} km)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] font-mono text-slate-600">
+                    <span>
+                      Confidence: <strong className="text-emerald-700 font-bold">{activeOriginSimulation.originExplanation.overallOriginConfidence}% High Certainty</strong>
+                    </span>
+                    <span>&bull;</span>
+                    <span>
+                      Suspect CPA: <strong className="text-rose-600 font-bold">{activeOriginSimulation.originZones[0]?.cpaVesselDistanceKm} km ({selectedCandidate.name})</strong>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3-COLUMN PROBABLE ORIGIN WORKBENCH */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                {/* LEFT COLUMN: CANDIDATE VESSELS & CANDIDATE ORIGIN ZONES (col-span-3) */}
+                <div className="lg:col-span-3 space-y-4">
+                  {/* Candidate Vessels Box */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] space-y-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-mono flex items-center gap-1.5">
+                        <Ship className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                        <span>CANDIDATE VESSELS ({candidates.length})</span>
+                      </h3>
+                      <span className="text-[10px] font-mono text-slate-400 font-bold">Case IN-MH</span>
                     </div>
 
-                    {/* 4 Small-Multiple Panels (2x2 Grid) */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {candidates.map((cand) => {
-                        const isTop = cand.rank === 1;
-                        const vColor = VESSEL_COLORS[cand.id] || VESSEL_COLORS["vessel-1"];
-                        const explanation = CANDIDATE_FORENSIC_EXPLANATIONS[cand.id];
+                    <div className="space-y-2">
+                      {candidates.map((c) => {
+                        const isSelected = c.id === selectedCandidate.id;
+                        const matchScore = isSelected ? lagrangianOutput.computedAttribution : c.score;
+                        const isTop = c.rank === 1;
 
                         return (
                           <div
-                            key={cand.id}
+                            key={c.id}
                             onClick={() => {
-                              setSelectedCandidate(cand);
-                              setLabMode("single");
+                              setSelectedCandidate(c);
+                              triggerToast(`Simulating reverse trajectory for ${c.name}`);
                             }}
-                            className={`p-4 rounded-2xl bg-white/95 backdrop-blur-md border transition-all cursor-pointer shadow-md hover:shadow-xl hover:scale-[1.01] ${
-                              selectedCandidate.id === cand.id
-                                ? "ring-2 ring-[#1E5FBF] border-[#1E5FBF]"
-                                : "border-[#E1EEF9]"
+                            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                              isSelected
+                                ? "bg-white border-[#1E5FBF] ring-2 ring-[#1E5FBF]/20 shadow-sm"
+                                : "bg-[#F8FBFE] border-[#E1EEF9] hover:border-slate-300"
                             }`}
                           >
-                            <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3">
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className="w-3 h-3 rounded-full shrink-0"
-                                  style={{ backgroundColor: vColor.primary }}
-                                />
-                                <div>
-                                  <h3 className="font-display font-bold text-xs text-[#0B2545]">{cand.name}</h3>
-                                  <div className="text-[10px] text-slate-400 font-mono">
-                                    IMO {cand.imo} &bull; {cand.type} &bull; Rank #{cand.rank}
-                                  </div>
-                                </div>
-                              </div>
-                              <span className={`badge-text px-2.5 py-0.5 rounded-full border text-xs font-bold ${vColor.badge}`}>
-                                {cand.score}% Match
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-bold text-xs text-[#0B2545] font-display uppercase tracking-tight truncate max-w-[140px]">
+                                {c.name}
+                              </span>
+                              <span
+                                className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                                  isTop
+                                    ? "bg-rose-100 text-rose-700 border border-rose-200"
+                                    : "bg-amber-100 text-amber-700 border border-amber-200"
+                                }`}
+                              >
+                                {matchScore.toFixed(1)}%
                               </span>
                             </div>
-
-                            {/* Small Miniature Map Graphic */}
-                            <div className="h-44 bg-[#061220] rounded-xl relative overflow-hidden border border-[#172E4D] p-2 flex flex-col justify-between shadow-inner">
-                              <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 280 160">
-                                {/* Grid lines */}
-                                <g stroke="#1E5FBF" strokeWidth="0.5" opacity="0.25" strokeDasharray="3 3">
-                                  <line x1="50" y1="0" x2="50" y2="160" />
-                                  <line x1="140" y1="0" x2="140" y2="160" />
-                                  <line x1="230" y1="0" x2="230" y2="160" />
-                                  <line x1="0" y1="40" x2="280" y2="40" />
-                                  <line x1="0" y1="80" x2="280" y2="80" />
-                                  <line x1="0" y1="120" x2="280" y2="120" />
-                                </g>
-
-                                {/* Observed SAR Slick Boundary */}
-                                <g transform="translate(140, 80) rotate(-24.6)">
-                                  <path
-                                    d="M-40,0 Q-30,-20 0,-18 Q30,-16 40,0 Q30,20 0,18 Q-30,16 -40,0 Z"
-                                    fill="rgba(239, 68, 68, 0.4)"
-                                    stroke="#EF4444"
-                                    strokeWidth="1.5"
-                                  />
-                                  <circle cx="0" cy="0" r="2.5" fill="#FEF08A" />
-                                </g>
-
-                                {/* Vessel Specific Track and Envelope */}
-                                {isTop ? (
-                                  <>
-                                    {/* MT Pacific Voyager - Gap and reachability envelope */}
-                                    <path
-                                      d="M40,25 L95,55 L140,80 L210,120 L260,150"
-                                      fill="none"
-                                      stroke="#F59E0B"
-                                      strokeWidth="1.5"
-                                      strokeDasharray="4 2"
-                                    />
-                                    {/* 94-min Gap Line in Red */}
-                                    <line x1="95" y1="55" x2="140" y2="80" stroke="#EF4444" strokeWidth="4" strokeLinecap="round" />
-                                    {/* Reachability Envelope enclosing origin */}
-                                    <circle
-                                      cx="95"
-                                      cy="55"
-                                      r="58"
-                                      fill="rgba(244, 63, 94, 0.12)"
-                                      stroke="#F43F5E"
-                                      strokeWidth="1.2"
-                                      strokeDasharray="4 3"
-                                    />
-                                    {/* Reverse Particle Stream */}
-                                    <path d="M80,50 Q110,65 140,80" fill="none" stroke="#38BDF8" strokeWidth="1.5" strokeDasharray="3 2" />
-                                  </>
-                                ) : cand.id === "vessel-2" ? (
-                                  <>
-                                    {/* CMA CGM Antares - Continuous Transit Track */}
-                                    <path d="M20,140 L120,95 L190,60 L270,25" fill="none" stroke="#D97706" strokeWidth="1.5" strokeDasharray="4 2" />
-                                    {/* Reachability Envelope Missing Origin */}
-                                    <circle cx="120" cy="95" r="16" fill="none" stroke="#D97706" strokeWidth="1" strokeDasharray="3 3" />
-                                    {/* Divergent Particle Stream */}
-                                    <path d="M60,40 Q90,55 120,68" fill="none" stroke="#38BDF8" strokeWidth="1" strokeDasharray="3 2" opacity="0.6" />
-                                  </>
-                                ) : cand.id === "vessel-3" ? (
-                                  <>
-                                    {/* MV Nordic Trader */}
-                                    <path d="M60,10 L60,80 L60,155" fill="none" stroke="#6366F1" strokeWidth="1.5" strokeDasharray="4 2" />
-                                    <circle cx="60" cy="80" r="22" fill="none" stroke="#6366F1" strokeWidth="1" strokeDasharray="3 3" />
-                                    <path d="M80,60 Q110,70 140,80" fill="none" stroke="#38BDF8" strokeWidth="1" strokeDasharray="3 2" opacity="0.5" />
-                                  </>
-                                ) : (
-                                  <>
-                                    {/* Sagar Shakti */}
-                                    <path d="M200,20 L235,50 L210,80" fill="none" stroke="#059669" strokeWidth="1.5" strokeDasharray="4 2" />
-                                    <circle cx="210" cy="80" r="12" fill="none" stroke="#059669" strokeWidth="1" strokeDasharray="3 3" />
-                                    <path d="M160,110 Q150,95 140,80" fill="none" stroke="#38BDF8" strokeWidth="1" strokeDasharray="3 2" opacity="0.3" />
-                                  </>
-                                )}
-                              </svg>
-
-                              {/* Mini HUD Badge */}
-                              <div className="relative z-10 flex items-center justify-between text-[9px] font-mono">
-                                <span className={`px-1.5 py-0.5 rounded bg-black/70 text-white font-bold`}>
-                                  {isTop ? "ENVELOPE COINCIDES (99.4%)" : `CPA OFFSET: ${cand.cpa}`}
-                                </span>
-                                <span className={`px-1.5 py-0.5 rounded ${isTop ? "bg-rose-900/80 text-rose-200" : "bg-slate-800 text-slate-300"}`}>
-                                  Gap: {cand.aisGap}
-                                </span>
-                              </div>
-
-                              <div className="relative z-10 flex items-center justify-between text-[8px] font-mono text-slate-300">
-                                <span>Speed: {cand.currentSpeed}</span>
-                                <span className="text-sky-300">Click to Deep-Dive &rarr;</span>
-                              </div>
-                            </div>
-
-                            {/* Why Ruled Out / Verdict Summary */}
-                            <div className="mt-3 pt-2.5 border-t border-slate-100">
-                              <div className="flex items-center gap-1.5 mb-1 text-[11px] font-bold">
-                                {isTop ? (
-                                  <span className="text-rose-600 flex items-center gap-1 font-body">
-                                    <Target className="w-3.5 h-3.5" /> {explanation?.verdict}
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-600 flex items-center gap-1 font-body">
-                                    <Scale className="w-3.5 h-3.5 text-amber-600" /> {explanation?.verdict}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-xs text-slate-600 leading-relaxed font-body">
-                                {explanation?.summary}
-                              </p>
-                              <div className="mt-2 space-y-1">
-                                {explanation?.ruledOutPoints.slice(0, 2).map((pt, idx) => (
-                                  <div key={idx} className="flex items-start gap-1.5 text-[11px] text-slate-500 font-body">
-                                    <span className="text-[#1E5FBF] font-bold">&bull;</span>
-                                    <span>{pt}</span>
-                                  </div>
-                                ))}
-                              </div>
+                            <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono mt-1">
+                              <span>IMO {c.imo || "9438200"}</span>
+                              <span className={isTop ? "text-rose-600 font-bold" : "text-slate-600"}>
+                                CPA: {isTop ? `${activeOriginSimulation.originZones[0]?.cpaVesselDistanceKm || 0.6} km` : `${(c.rank * 14.2).toFixed(1)} km`}
+                              </span>
                             </div>
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                ) : (
-                  /* ----------------------------------------------------------- */
-                  /* SINGLE CANDIDATE INTERACTIVE DEEP-DIVE VIEW                 */
-                  /* ----------------------------------------------------------- */
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-                    {/* Left Column: Candidates Selector & Ruled-Out Details (3 cols) */}
-                    <div className="lg:col-span-3 bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-lg p-4 flex flex-col justify-between">
+
+                  {/* Candidate Origin Release Zones Box */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] space-y-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-mono flex items-center gap-1.5">
+                        <Target className="w-3.5 h-3.5 text-amber-500" />
+                        <span>CANDIDATE ORIGIN ZONES</span>
+                      </h3>
+                      <span className="text-[10px] font-mono text-emerald-600 font-bold">3 Surfaces</span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {activeOriginSimulation.originZones.map((zone: OriginProbabilityZone) => {
+                        const isSelected = selectedOriginZoneId === zone.id;
+                        return (
+                          <div
+                            key={zone.id}
+                            onClick={() => {
+                              setSelectedOriginZoneId(zone.id);
+                              triggerToast(`Selected ${zone.name} (${zone.probabilityPct}% prob)`);
+                            }}
+                            className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                              isSelected
+                                ? "bg-white border-[#1E5FBF] ring-2 ring-[#1E5FBF]/20 shadow-xs"
+                                : "bg-[#F8FBFE] border-[#E1EEF9] hover:border-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-bold text-[#0B2545] flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: zone.color }} />
+                                <span>{zone.name.split("(")[0]}</span>
+                              </span>
+                              <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                                zone.probabilityLevel === "HIGH" ? "bg-rose-100 text-rose-800" : zone.probabilityLevel === "MEDIUM" ? "bg-amber-100 text-amber-800" : "bg-indigo-100 text-indigo-800"
+                              }`}>
+                                {zone.probabilityPct}% Prob
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono mt-1">
+                              <span>Area: {zone.areaKm2} km²</span>
+                              <span>Suspect CPA: <strong className={zone.probabilityLevel === "HIGH" ? "text-rose-600 font-bold" : "text-slate-700"}>{zone.cpaVesselDistanceKm} km</strong></span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* CENTER COLUMN: REVERSE PARTICLE TRAJECTORY & PROBABLE ORIGIN MAP (col-span-6) */}
+                <div className="lg:col-span-6 p-4 sm:p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
                       <div>
-                        <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-                          <span className="font-display font-semibold text-xs text-[#0B2545] uppercase tracking-[0.06em]">
-                            Candidate Vessels (4)
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-mono flex items-center gap-1.5">
+                          <Compass className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                          <span>REVERSE PARTICLE TRAJECTORY &amp; PROBABLE ORIGIN MAP</span>
+                        </h3>
+                        <p className="text-[11px] text-slate-500 font-body">
+                          Back-tracking target: <strong className="text-[#1E5FBF]">{selectedCandidate.name}</strong> • Release window: <strong className="text-amber-600">{activeOriginSimulation.originTimeWindow}</strong>
+                        </p>
+                      </div>
+
+                      {/* Dual / Overlap View Mode Toggle */}
+                      <div className="flex items-center bg-[#F0F7FD] p-0.5 rounded-lg border border-[#E1EEF9] text-[10px] font-mono font-bold">
+                        <button
+                          onClick={() => setHindcastViewMode("Dual")}
+                          className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                            hindcastViewMode === "Dual"
+                              ? "bg-[#0B2545] text-white shadow-xs"
+                              : "text-slate-600 hover:text-[#0B2545]"
+                          }`}
+                        >
+                          Dual
+                        </button>
+                        <button
+                          onClick={() => setHindcastViewMode("Overlap")}
+                          className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                            hindcastViewMode === "Overlap"
+                              ? "bg-[#0B2545] text-white shadow-xs"
+                              : "text-slate-600 hover:text-[#0B2545]"
+                          }`}
+                        >
+                          Overlap
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Dark Marine Centerpiece GIS Interactive Map Canvas */}
+                    <div className="relative mt-2 rounded-xl overflow-hidden border border-slate-800 bg-[#051322] h-[380px]">
+                      <IncidentMiniMap
+                        center={[18.69, 72.38]}
+                        originCoord={activeOriginSimulation.probableOrigin}
+                        spillPolygon={activeOriginSimulation.sheenLayer.coordinates}
+                        forecastTrack={activeOriginSimulation.forecastLineCoords}
+                        vessels={dynamicMapVessels}
+                        cgAssets={dynamicMapAssets}
+                        isSimulated={true}
+                      />
+
+                      {/* Top-Left Telemetry Overlay: Correlation Variance */}
+                      <div className="absolute top-3 left-3 z-[400] pointer-events-none">
+                        <div className="bg-[#0B2545]/92 backdrop-blur-md px-3 py-1.5 rounded-lg border border-sky-400/30 text-left shadow-lg">
+                          <span className="text-[10px] font-mono text-slate-300 block">Lagrangian Precision:</span>
+                          <span className="text-xs font-mono font-bold text-emerald-400">
+                            0.6% Discrepancy (99.4% Match)
                           </span>
-                          <span className="data-mono-sm text-slate-400 font-mono">Case IN-MH</span>
-                        </div>
-
-                        <div className="space-y-2.5 max-h-[440px] overflow-y-auto custom-tactical-scrollbar pr-1">
-                          {candidates.map((cand) => {
-                            const isSel = selectedCandidate.id === cand.id;
-                            const vColor = VESSEL_COLORS[cand.id] || VESSEL_COLORS["vessel-1"];
-                            const expl = CANDIDATE_FORENSIC_EXPLANATIONS[cand.id];
-
-                            return (
-                              <div
-                                key={cand.id}
-                                onClick={() => setSelectedCandidate(cand)}
-                                className={`p-3 rounded-xl border transition-all cursor-pointer ${
-                                  isSel
-                                    ? "bg-[#EFF6FD] border-[#1E5FBF] shadow-sm ring-2 ring-[#1E5FBF]/20"
-                                    : "bg-[#F8FBFE] hover:bg-slate-50 border-[#E1EEF9]"
-                                }`}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-1.5">
-                                    <span
-                                      className="w-2.5 h-2.5 rounded-full"
-                                      style={{ backgroundColor: vColor.primary }}
-                                    />
-                                    <span className="font-body font-semibold text-xs text-[#0B2545]">{cand.name}</span>
-                                  </div>
-                                  <span className={`badge-text px-2 py-0.5 rounded-full border text-[10px] font-bold ${vColor.badge}`}>
-                                    {cand.score}%
-                                  </span>
-                                </div>
-                                <div className="text-[10px] text-slate-500 font-mono mt-1 flex justify-between">
-                                  <span>IMO: {cand.imo}</span>
-                                  <span className="font-bold">Gap: {cand.aisGap}</span>
-                                </div>
-
-                                {/* Short Ruled Out Reason */}
-                                <div className="mt-2 pt-1.5 border-t border-slate-200 text-[10px] text-slate-600 font-body leading-snug">
-                                  {cand.rank === 1 ? (
-                                    <span className="text-rose-700 font-medium">★ Primary Forensic Suspect (94m gap + speed drop)</span>
-                                  ) : (
-                                    <span className="text-slate-500">
-                                      <strong className="text-slate-700">Ruled Out:</strong> {expl?.ruledOutPoints[0]}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
                         </div>
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-[#E1EEF9] flex items-center justify-between">
-                        <span className="micro-text text-slate-400 font-body">Selected for Hindcast</span>
-                        <span className="font-mono text-xs font-bold text-[#1E5FBF]">
-                          Rank #{selectedCandidate.rank} &bull; {selectedCandidate.flag}
+                      {/* Top-Right Telemetry Overlay: Dual Reconstruction View */}
+                      <div className="absolute top-3 right-3 z-[400] pointer-events-none">
+                        <div className="bg-[#0B2545]/92 backdrop-blur-md px-2.5 py-1 rounded-md border border-white/10 text-[9px] font-mono font-bold text-slate-300 shadow-md uppercase tracking-wider">
+                          ORIGIN HINDCAST VIEW
+                        </div>
+                      </div>
+
+                      {/* Bottom Overlay Telemetry Pill Bar */}
+                      <div className="absolute bottom-2 left-2 right-2 z-[400] pointer-events-none">
+                        <div className="bg-[#0B2545]/92 backdrop-blur-md px-3 py-1.5 rounded-xl border border-sky-400/20 text-[10px] font-mono flex items-center justify-between text-slate-300 flex-wrap gap-2 shadow-lg">
+                          <div>
+                            <span className="text-slate-400">Sentinel-1A SAR: </span>
+                            <strong className="text-white">276.04 km²</strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">INCOIS Current: </span>
+                            <strong className="text-sky-300">{originCurrentSpeedKts} kts @ {originCurrentDirDeg}°</strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">ECMWF Wind: </span>
+                            <strong className="text-amber-300">{originWindSpeedKts} kts @ {originWindDirDeg}°</strong>
+                          </div>
+                          <div>
+                            <span className="text-emerald-400 font-bold">Forensic: HIGH CERTAINTY</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Caption Note Below Map */}
+                  <p className="text-xs text-slate-600 font-body leading-relaxed">
+                    Counterfactual physics model runs reverse Lagrangian particle tracking driven by INCOIS ocean currents and ECMWF 10m wind fields to determine the release origin coordinates and suspect AIS track intersection.
+                  </p>
+                </div>
+
+                {/* RIGHT COLUMN: ORIGIN EVIDENCE SCORE BREAKDOWN & WHY THIS ORIGIN PANEL (col-span-3) */}
+                <div className="lg:col-span-3 space-y-4">
+                  {/* Evidence Score Breakdown Chart */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] space-y-2.5">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-mono">
+                        ORIGIN EVIDENCE BREAKDOWN
+                      </h3>
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200">
+                        {activeOriginSimulation.originExplanation.overallOriginConfidence}% Match
+                      </span>
+                    </div>
+
+                    {/* Bar Chart Breakdown */}
+                    <div className="h-36 w-full pt-1">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={[
+                            { name: "Spatial Conv", score: activeOriginSimulation.originExplanation.spatialConvergenceScore, fill: "#2563EB" },
+                            { name: "Time Match", score: activeOriginSimulation.originExplanation.temporalMatchScore, fill: "#0EA5E9" },
+                            { name: "Env Fit", score: activeOriginSimulation.originExplanation.environmentalConsistencyScore, fill: "#10B981" },
+                            { name: "Vessel AIS", score: activeOriginSimulation.originExplanation.vesselCorrelationScore, fill: "#EF4444" },
+                          ]}
+                          margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+                          <XAxis dataKey="name" tick={{ fontSize: 8.5, fill: "#64748B" }} tickLine={false} axisLine={{ stroke: "#E2E8F0" }} />
+                          <YAxis domain={[0, 100]} ticks={[0, 50, 100]} tick={{ fontSize: 8.5, fill: "#64748B" }} tickLine={false} axisLine={{ stroke: "#E2E8F0" }} />
+                          <RechartsTooltip />
+                          <Bar dataKey="score" radius={[3, 3, 0, 0]}>
+                            {evidenceBarData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.fill} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Attribution Probability Box */}
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                      <div className="text-xs font-bold font-mono text-rose-600 flex items-center justify-between">
+                        <span>ATTRIBUTION: {selectedCandidate.rank === 1 ? "98.8%" : `${lagrangianOutput.computedAttribution.toFixed(1)}%`}</span>
+                        <span className="text-[10px] text-slate-500 font-sans">Rank #{selectedCandidate.rank}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 font-body leading-snug">
+                        {selectedCandidate.rank === 1
+                          ? "Drastic speed drop from 13.8 to 1.4 kts correlates with 94 min transponder gap right along the central slick centroid. Hydrodynamic match is optimal."
+                          : `Vessel trajectory maintains an offset of ${(selectedCandidate.rank * 14.2).toFixed(1)} km from the calculated Lagrangian release centroid with minimal kinematic anomaly.`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* "WHY THIS ORIGIN?" Evidence Explanation Panel */}
+                  <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] space-y-2.5">
+                    <div className="flex items-center justify-between pb-1.5 border-b border-[#E1EEF9]">
+                      <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-mono flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span>WHY THIS ORIGIN?</span>
+                      </h3>
+                      <span className="text-[10px] font-mono text-slate-400 font-bold">5 Points</span>
+                    </div>
+
+                    <div className="space-y-2 max-h-[190px] overflow-y-auto pr-1">
+                      {activeOriginSimulation.originExplanation.evidenceList.map((item: OriginEvidenceItem, idx: number) => (
+                        <div key={idx} className="p-2 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-0.5">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <strong className="text-[#0B2545] font-semibold">{item.title}</strong>
+                            <span className={`text-[8.5px] font-mono font-bold px-1.5 py-0.2 rounded ${
+                              item.status === "OPTIMAL" || item.status === "VERIFIED" ? "bg-emerald-100 text-emerald-800" : "bg-sky-100 text-sky-800"
+                            }`}>
+                              {item.status} ({item.score}%)
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-600 leading-tight font-body">{item.detail}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100">
+                      <p className="text-[9.5px] text-slate-400 font-body leading-tight">
+                        &bull; Legal Note: Probabilistic intelligence evidence generated under IMO guidelines &mdash; not legal proof of liability.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ================================================================= */}
+          {/* TAB 2: WHAT-IF PREDICTIVE RESPONSE SIMULATOR                      */}
+          {/* ================================================================= */}
+          {activeTab === "whatif" && (
+            <div className="space-y-6 animate-fadeIn">
+              {/* TOP COMMAND HEADER (Matching Reference Screenshot 2) */}
+              <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200 uppercase">
+                        STAGE 18: REAL-TIME SIMULATOR
+                      </span>
+                      <h2 className="text-base font-bold text-[#0B2545] font-display">
+                        Predictive Response Scenario Simulator
+                      </h2>
+                    </div>
+                    <p className="text-xs text-slate-500 font-body mt-0.5">
+                      Adjust environmental assumptions and response delays below to re-run the hydrodynamic containment model live across all 3 tactical operational plans.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setWhatIfWindSpeed(14.2 / 1.94384);
+                        setWhatIfDispatchDelayHours(2.0);
+                        setWhatIfBoomLength(1500);
+                        triggerToast("Reset simulator to baseline ECMWF conditions.");
+                      }}
+                      className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Reset Defaults</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        triggerToast(`Applied Strategy: ${selectedTacticalStrategy.toUpperCase()} to operational response plan.`);
+                      }}
+                      className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold font-body flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Apply Selected Strategy</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3 PARAMETER SLIDERS ROW (Surface Wind, Mobilization Delay, Boom Length) */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                  {/* Slider 1: Surface Wind Speed */}
+                  <div className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="flex items-center gap-1.5 text-slate-700">
+                        <Wind className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                        <span>Surface Wind Speed (ECMWF):</span>
+                      </span>
+                      <span className="font-mono font-bold text-[#1E5FBF]">
+                        {(whatIfWindSpeed * 1.94384).toFixed(1)} kts
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="2.5"
+                      max="15.5"
+                      step="0.2"
+                      value={whatIfWindSpeed}
+                      onChange={(e) => setWhatIfWindSpeed(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1E5FBF]"
+                    />
+                    <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                      <span>5 kts (Calm)</span>
+                      <span>14.2 kts (Baseline)</span>
+                      <span>30 kts (Squall)</span>
+                    </div>
+                  </div>
+
+                  {/* Slider 2: Asset Mobilization Delay */}
+                  <div className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="flex items-center gap-1.5 text-slate-700">
+                        <Clock className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Asset Mobilization Delay:</span>
+                      </span>
+                      <span className="font-mono font-bold text-amber-600">
+                        +{whatIfDispatchDelayHours.toFixed(1)} Hours
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="8.0"
+                      step="0.5"
+                      value={whatIfDispatchDelayHours}
+                      onChange={(e) => setWhatIfDispatchDelayHours(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                    />
+                    <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                      <span>0h (Immediate)</span>
+                      <span>2.0h (Baseline)</span>
+                      <span>8h (High Delay)</span>
+                    </div>
+                  </div>
+
+                  {/* Slider 3: Containment Boom Length */}
+                  <div className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="flex items-center gap-1.5 text-slate-700">
+                        <Anchor className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Containment Boom Length:</span>
+                      </span>
+                      <span className="font-mono font-bold text-emerald-600">
+                        {whatIfBoomLength} meters
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="500"
+                      max="3000"
+                      step="100"
+                      value={whatIfBoomLength}
+                      onChange={(e) => setWhatIfBoomLength(parseInt(e.target.value))}
+                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                    />
+                    <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                      <span>500m (Light)</span>
+                      <span>1500m (Standard)</span>
+                      <span>3000m (Heavy Barrier)</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* AI Recommendation Banner */}
+                <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 flex items-start gap-2.5 text-xs text-emerald-950 font-body">
+                  <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    <strong className="font-semibold text-emerald-900">AI Recommendation (Live Recalculated):</strong> Fastest containment at lowest cost (₹38L–₹50L), restricting Maharashtra coastline impact to 3.3%–5.5% and saving ~₹76L vs delayed dispatch despite higher initial mobilization speed.
+                  </p>
+                </div>
+
+                {/* 3 TACTICAL STRATEGY CARDS (Matching Reference Screenshot 2) */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Card 1: Immediate Containment (T + 0h) - Recommended */}
+                  <div
+                    onClick={() => setSelectedTacticalStrategy("immediate")}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between space-y-3 ${
+                      selectedTacticalStrategy === "immediate"
+                        ? "bg-white border-emerald-400 ring-2 ring-emerald-300/50 shadow-md"
+                        : "bg-white border-[#E1EEF9] hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                          ★ RECOMMENDED
+                        </span>
+                        <span className="text-xs font-mono font-bold text-slate-700">86/100 Score</span>
+                      </div>
+
+                      <h4 className="font-bold text-sm text-[#0B2545] font-display">
+                        Immediate Containment (T + 0h)
+                      </h4>
+                      <p className="text-xs text-slate-600 font-body leading-relaxed">
+                        Deploy ICGS Vikram offshore barrier within 2 hours of SAR detection with high-speed ocean boom.
+                      </p>
+
+                      {/* Mini Simulation Diagram Canvas */}
+                      <div className="relative h-20 w-full rounded-xl bg-[#0B1E36] overflow-hidden border border-slate-700 flex items-center justify-center">
+                        <div className="w-16 h-10 rounded-full bg-rose-600/70 blur-[2px] border border-rose-400/50" />
+                        <div className="absolute left-1/3 w-10 h-12 rounded-full border-2 border-dashed border-emerald-400 border-r-0" />
+                        <div className="absolute right-4 h-16 w-1 rounded-full bg-amber-400" />
+                        <span className="absolute bottom-1.5 left-4 text-[8px] font-mono text-emerald-300">BOOM SECURED</span>
+                        <span className="absolute bottom-1.5 right-2 text-[8px] font-mono text-amber-300">COAST</span>
+                      </div>
+
+                      <div className="space-y-1 text-xs font-mono pt-1">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Coastline Impact Range:</span>
+                          <strong className="text-emerald-600">3.3% - 5.5%</strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Spill Extent Range:</span>
+                          <span className="text-slate-800">271 - 336 km²</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Time to Contain:</span>
+                          <span className="text-slate-800">12.3 - 17.4 h</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Estimated Cost:</span>
+                          <span className="text-slate-800">₹38 - ₹50L</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      className={`w-full py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        selectedTacticalStrategy === "immediate"
+                          ? "bg-[#0B2545] text-white"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      {selectedTacticalStrategy === "immediate" ? "Selected Strategy" : "Select Strategy"}
+                    </button>
+                  </div>
+
+                  {/* Card 2: Delayed Mobilization (T + 6h) */}
+                  <div
+                    onClick={() => setSelectedTacticalStrategy("delayed")}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between space-y-3 ${
+                      selectedTacticalStrategy === "delayed"
+                        ? "bg-white border-rose-400 ring-2 ring-rose-300/50 shadow-md"
+                        : "bg-white border-[#E1EEF9] hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                          Alternative Plan
+                        </span>
+                        <span className="text-xs font-mono font-bold text-rose-600">24/100 Score</span>
+                      </div>
+
+                      <h4 className="font-bold text-sm text-[#0B2545] font-display">
+                        Delayed Mobilization (T + 6h)
+                      </h4>
+                      <p className="text-xs text-slate-600 font-body leading-relaxed">
+                        Wait for secondary SAR optical confirmation pass before surface fleet dispatch.
+                      </p>
+
+                      {/* Mini Simulation Diagram Canvas */}
+                      <div className="relative h-20 w-full rounded-xl bg-[#0B1E36] overflow-hidden border border-slate-700 flex items-center justify-center">
+                        <div className="w-24 h-12 rounded-full bg-rose-600/80 blur-[2px] border border-rose-500" />
+                        <div className="absolute right-4 h-16 w-1 rounded-full bg-amber-400" />
+                        <span className="absolute bottom-1.5 left-6 text-[8px] font-mono text-rose-300">SHORELINE BREACH</span>
+                        <span className="absolute bottom-1.5 right-2 text-[8px] font-mono text-amber-300">COAST</span>
+                      </div>
+
+                      <div className="space-y-1 text-xs font-mono pt-1">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Coastline Impact Range:</span>
+                          <strong className="text-rose-600">30.1% - 51.0%</strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Spill Extent Range:</span>
+                          <span className="text-slate-800">407 - 504 km²</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Time to Contain:</span>
+                          <span className="text-slate-800">30.6 - 43.2 h</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Estimated Cost:</span>
+                          <span className="text-slate-800">₹106 - ₹139L</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      className={`w-full py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        selectedTacticalStrategy === "delayed"
+                          ? "bg-[#0B2545] text-white"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      {selectedTacticalStrategy === "delayed" ? "Selected Strategy" : "Select Strategy"}
+                    </button>
+                  </div>
+
+                  {/* Card 3: Zone A Skimming Prioritization */}
+                  <div
+                    onClick={() => setSelectedTacticalStrategy("zoneA")}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between space-y-3 ${
+                      selectedTacticalStrategy === "zoneA"
+                        ? "bg-white border-amber-400 ring-2 ring-amber-300/50 shadow-md"
+                        : "bg-white border-[#E1EEF9] hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                          Alternative Plan
+                        </span>
+                        <span className="text-xs font-mono font-bold text-amber-600">70/100 Score</span>
+                      </div>
+
+                      <h4 className="font-bold text-sm text-[#0B2545] font-display">
+                        Zone A Skimming Prioritization
+                      </h4>
+                      <p className="text-xs text-slate-600 font-body leading-relaxed">
+                        Focus all skimming cutters exclusively on Alibaug turtle breeding beaches and mangrove nursery zones.
+                      </p>
+
+                      {/* Mini Simulation Diagram Canvas */}
+                      <div className="relative h-20 w-full rounded-xl bg-[#0B1E36] overflow-hidden border border-slate-700 flex items-center justify-center">
+                        <div className="w-18 h-10 rounded-full bg-rose-600/70 blur-[2px]" />
+                        <div className="absolute right-10 h-10 w-2 rounded-full border-r-2 border-sky-400" />
+                        <div className="absolute right-4 h-16 w-1 rounded-full bg-amber-400" />
+                        <span className="absolute bottom-1.5 left-6 text-[8px] font-mono text-sky-300">ZONE A SHIELD</span>
+                        <span className="absolute bottom-1.5 right-2 text-[8px] font-mono text-amber-300">COAST</span>
+                      </div>
+
+                      <div className="space-y-1 text-xs font-mono pt-1">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Coastline Impact Range:</span>
+                          <strong className="text-amber-600">10.0% - 16.9%</strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Spill Extent Range:</span>
+                          <span className="text-slate-800">313 - 388 km²</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Time to Contain:</span>
+                          <span className="text-slate-800">18.7 - 26.4 h</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-sans">Estimated Cost:</span>
+                          <span className="text-slate-800">₹68 - ₹89L</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      className={`w-full py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        selectedTacticalStrategy === "zoneA"
+                          ? "bg-[#0B2545] text-white"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      {selectedTacticalStrategy === "zoneA" ? "Selected Strategy" : "Select Strategy"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* PRIMARY VISUAL CENTERPIECE: ADVANCED REALISTIC GIS MAP (15 Core Capabilities) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MapIcon className="w-4 h-4 text-[#1E5FBF]" />
+                    <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                      Dynamic Hydrodynamic Spill Simulation Map (Bonn Scale &amp; Lagrangian Advection)
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setSpillDNAModalOpen(true)}
+                      className="px-2.5 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-[#1E5FBF] border border-sky-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Globe className="w-3.5 h-3.5" />
+                      <span>Spill DNA &amp; Morphology</span>
+                    </button>
+                    <span className="text-[10px] font-mono bg-emerald-50 text-emerald-800 px-2.5 py-0.5 rounded-full font-bold border border-emerald-200">
+                      Live Reactivity to Slider Inputs
+                    </span>
+                  </div>
+                </div>
+
+                <AdvancedSpillMap
+                  simulationParams={{
+                    centroid: [18.69, 72.38],
+                    windSpeedKts: Number((whatIfWindSpeed * 1.94384).toFixed(1)),
+                    windDirDeg: whatIfWindDir,
+                    currentSpeedKts: Number((whatIfCurrentSpeed * 1.94384).toFixed(1)),
+                    currentDirDeg: 189,
+                    releaseVolumeM3: 18000,
+                    containmentEffPct: Math.min(90, Math.round((whatIfBoomLength / 5000) * 80)),
+                    chemicalDispersant: whatIfChemicalDispersant,
+                    responseDelayHours: whatIfDispatchDelayHours,
+                  }}
+                  height={560}
+                  onSelectVessel={(v) => {
+                    setSelectedCandidate(v);
+                    triggerToast(`Selected ${v.name} on simulation map`);
+                  }}
+                  onOpenReportModal={() => setShowReportModal(true)}
+                  onTriggerToast={triggerToast}
+                />
+              </div>
+
+              {/* Side-by-Side Reality vs Scenario Comparison Matrix */}
+              <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
+                  <div className="flex items-center gap-2">
+                    <GitCompare className="w-4 h-4 text-[#1E5FBF]" />
+                    <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                      Side-by-Side Impact Matrix (Baseline vs. What-If Scenario)
+                    </h2>
+                  </div>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
+                    whatIfScenarioOutput.riskLevel.includes("CRITICAL") ? "bg-rose-100 text-rose-800" : "bg-emerald-100 text-emerald-800"
+                  }`}>
+                    {whatIfScenarioOutput.riskLevel}
+                  </span>
+                </div>
+
+                {/* Side-by-Side Comparison Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Baseline Column */}
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                      <span className="font-bold text-xs text-slate-700 uppercase font-display">
+                        Baseline Ambient Telemetry
+                      </span>
+                      <span className="text-[10px] font-mono bg-slate-200 px-2 py-0.5 rounded text-slate-600">
+                        Current
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 text-xs font-mono">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-sans">Net Drift Velocity:</span>
+                        <strong className="text-slate-800">{whatIfScenarioOutput.baselineSpeedKts} kts</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-sans">Dispersion Heading:</span>
+                        <strong className="text-slate-800">{whatIfScenarioOutput.baselineHeadingDeg}°</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-sans">24h Projected Area:</span>
+                        <strong className="text-slate-800">{whatIfScenarioOutput.baselineProjectedArea24h} km²</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-sans">Projected Landfall ETA:</span>
+                        <strong className="text-slate-800">~ {whatIfScenarioOutput.baselineLandfallEta}h</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-sans">Est. Clean-up Cost:</span>
+                        <strong className="text-slate-800">₹{whatIfScenarioOutput.baselineCostCr} Cr</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* What-If Scenario Column */}
+                  <div className="p-4 rounded-xl bg-sky-50/60 border border-sky-200 space-y-3">
+                    <div className="flex items-center justify-between border-b border-sky-200 pb-1.5">
+                      <span className="font-bold text-xs text-[#0B2545] uppercase font-display">
+                        Simulated What-If Scenario
+                      </span>
+                      <span className="text-[10px] font-mono bg-sky-200 px-2 py-0.5 rounded text-sky-900 font-bold">
+                        Active Model
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 text-xs font-mono">
+                      <div className="flex justify-between">
+                        <span className="text-slate-600 font-sans">Net Drift Velocity:</span>
+                        <strong className="text-[#1E5FBF]">{whatIfScenarioOutput.netSpeedKts.toFixed(1)} kts</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600 font-sans">Dispersion Heading:</span>
+                        <strong className="text-amber-600">{Math.round(whatIfScenarioOutput.netHeadingDeg)}°</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600 font-sans">24h Projected Area:</span>
+                        <strong className="text-rose-600">{whatIfScenarioOutput.projectedArea24h.toFixed(1)} km²</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600 font-sans">Projected Landfall ETA:</span>
+                        <strong className="text-rose-600">~ {whatIfScenarioOutput.landfallEtaHours.toFixed(1)}h</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600 font-sans">Est. Clean-up Cost:</span>
+                        <strong className="text-[#0B2545]">₹{whatIfScenarioOutput.estimatedCostCr} Cr</strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hourly Area & Distance Comparison Chart */}
+                <div className="pt-2 space-y-2">
+                  <span className="text-xs font-bold text-[#0B2545] uppercase tracking-wider block font-display">
+                    48-Hour Hydrodynamic Dispersion Projection (Area km² vs. Distance to Shore)
+                  </span>
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={hourlySimulationComparisonData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                        <XAxis dataKey="hour" tick={{ fontSize: 10, fill: "#64748B" }} />
+                        <YAxis tick={{ fontSize: 10, fill: "#64748B" }} />
+                        <RechartsTooltip />
+                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                        <Area type="monotone" dataKey="whatIfArea" name="Simulated Scenario Area (km²)" stroke="#EF4444" fill="#FEE2E2" fillOpacity={0.5} strokeWidth={2} />
+                        <Area type="monotone" dataKey="baselineArea" name="Baseline Reality Area (km²)" stroke="#1E5FBF" fill="#E0F2FE" fillOpacity={0.3} strokeWidth={2} />
+                        <Line type="monotone" dataKey="whatIfDistance" name="Simulated Distance to Shore (km)" stroke="#D97706" strokeWidth={2} strokeDasharray="4 4" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ================================================================= */}
+          {/* TAB 3: ENVIRONMENTAL IMPACT FORENSICS & MPA EXPOSURE LAB          */}
+          {/* ================================================================= */}
+          {activeTab === "environmental" && (
+            <div className="space-y-6 animate-fadeIn">
+              {/* 1. TOP COMMAND & SCENARIO COUPLING RIBBON */}
+              <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-700 flex items-center justify-center text-white shadow-md">
+                      <Leaf className="w-5 h-5 text-emerald-200" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200 uppercase">
+                          STAGE 13 &amp; 14: ENVIRONMENTAL FORENSICS &amp; MPA EXPOSURE
+                        </span>
+                        <h2 className="text-sm sm:text-base font-bold text-[#0B2545] font-display">
+                          Environmental &amp; Marine Habitat Impact Forensics
+                        </h2>
+                      </div>
+                      <p className="text-xs text-slate-500 font-body mt-0.5">
+                        Forensic quantification of hydrocarbon contamination across marine protected areas, mangrove biomes, coral reefs, commercial fishing zones, and coastal water quality.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${
+                      environmentalImpactOutput.overallEnvScore >= 80
+                        ? "bg-rose-100 text-rose-800 border-rose-200"
+                        : environmentalImpactOutput.overallEnvScore >= 60
+                        ? "bg-amber-100 text-amber-800 border-amber-200"
+                        : "bg-emerald-100 text-emerald-800 border-emerald-200"
+                    }`}>
+                      {environmentalImpactOutput.riskTier}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setReportStage("environmental");
+                        setShowReportModal(true);
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-bold font-body flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+                      title="Generate certified environmental impact PDF dossier"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Generate Environmental Impact Report</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Real-time What-If Reactivity Banner */}
+                <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 flex items-center justify-between flex-wrap gap-2 text-xs font-body">
+                  <div className="flex items-center gap-2 text-emerald-950">
+                    <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>
+                      <strong className="font-semibold">Connected to What-If Simulator:</strong> Hydrodynamic drift heading at{" "}
+                      <strong className="font-mono text-emerald-900">{Math.round(whatIfScenarioOutput.netHeadingDeg)}°</strong>, wind speed{" "}
+                      <strong className="font-mono text-emerald-900">{(whatIfWindSpeed * 1.94384).toFixed(1)} kts</strong>, mobilization lag{" "}
+                      <strong className="font-mono text-emerald-900">+{whatIfDispatchDelayHours.toFixed(1)}h</strong>.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveTab("whatif");
+                      setSearchParams({ tab: "whatif", vessel: selectedCandidate.name });
+                    }}
+                    className="text-xs font-bold text-emerald-700 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Tune Simulation Parameters &rarr;</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 2. TOP 4 DYNAMIC ENVIRONMENTAL KPI METRIC CARDS */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* KPI 1: Spill Extent & Dispersed Exposure */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                        SPILL EXTENT &amp; VOLUME
+                      </span>
+                      <Droplets className="w-4 h-4 text-rose-500" />
+                    </div>
+                    <div className="text-3xl font-extrabold text-[#0B2545] font-display mt-2">
+                      {environmentalImpactOutput.coreSlickAreaKm2} <span className="text-base font-medium text-slate-500">km²</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>Exposure: <strong className="text-rose-600">{environmentalImpactOutput.totalExposureAreaKm2} km²</strong></span>
+                    <span className="text-[10px] bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded font-bold border border-rose-200">240 µm Core</span>
+                  </div>
+                </div>
+
+                {/* KPI 2: Distance to Coastline */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                        COASTLINE PROXIMITY
+                      </span>
+                      <Compass className="w-4 h-4 text-[#1E5FBF]" />
+                    </div>
+                    <div className="text-3xl font-extrabold text-[#1E5FBF] font-display mt-2">
+                      {environmentalImpactOutput.distToCoastKm} <span className="text-base font-medium text-slate-500">km</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>Landfall ETA: <strong className="text-amber-600">~{whatIfScenarioOutput.landfallEtaHours.toFixed(1)}h</strong></span>
+                    <span className="text-[10px] bg-sky-50 text-[#1E5FBF] px-1.5 py-0.5 rounded font-bold border border-sky-200">
+                      {Math.round(whatIfScenarioOutput.netHeadingDeg)}° ESE
+                    </span>
+                  </div>
+                </div>
+
+                {/* KPI 3: Coastline Exposure Length */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                        EST. SHORELINE EXPOSURE
+                      </span>
+                      <Waves className="w-4 h-4 text-amber-500" />
+                    </div>
+                    <div className="text-3xl font-extrabold text-amber-600 font-display mt-2">
+                      {environmentalImpactOutput.shorelineExposureKm} <span className="text-base font-medium text-slate-500">km</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>Target: <strong className="text-slate-800">Alibaug-Murud</strong></span>
+                    <span className="text-[10px] bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded font-bold border border-amber-200">High Risk</span>
+                  </div>
+                </div>
+
+                {/* KPI 4: Sensitive Habitats Affected */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                        SENSITIVE BIOMES IN DANGER
+                      </span>
+                      <Trees className="w-4 h-4 text-emerald-600" />
+                    </div>
+                    <div className="text-3xl font-extrabold text-emerald-600 font-display mt-2">
+                      {environmentalImpactOutput.affectedZonesCount} <span className="text-base font-medium text-slate-500">/ 5 Zones</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>Mangrove &amp; Coral</span>
+                    <span className="text-[10px] bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded font-bold border border-emerald-200">INCOIS GIS</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. 2-COLUMN MAIN ENVIRONMENTAL WORKBENCH GRID */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* LEFT COLUMN: ENVIRONMENTAL IMPACT SCORE & "WHY THIS IMPACT?" (col-span-5) */}
+                <div className="lg:col-span-5 space-y-6">
+                  {/* Environmental Impact Score Card */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-5">
+                    <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <ShieldAlert className="w-4 h-4 text-emerald-600" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Dynamic Environmental Impact Score
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded font-bold border border-emerald-200">
+                        98.4% Confidence
+                      </span>
+                    </div>
+
+                    {/* Radial Score Centerpiece */}
+                    <div className="flex items-center justify-center gap-6 p-4 rounded-2xl bg-gradient-to-br from-[#0B2545] to-[#123A66] text-white">
+                      <div className="relative w-28 h-28 flex items-center justify-center shrink-0">
+                        <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                          <path
+                            className="text-slate-700"
+                            strokeWidth="3.2"
+                            stroke="currentColor"
+                            fill="none"
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          />
+                          <path
+                            className={
+                              environmentalImpactOutput.overallEnvScore >= 80
+                                ? "text-rose-500"
+                                : environmentalImpactOutput.overallEnvScore >= 60
+                                ? "text-amber-400"
+                                : "text-emerald-400"
+                            }
+                            strokeDasharray={`${environmentalImpactOutput.overallEnvScore}, 100`}
+                            strokeWidth="3.2"
+                            strokeLinecap="round"
+                            stroke="currentColor"
+                            fill="none"
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          />
+                        </svg>
+                        <div className="absolute flex flex-col items-center justify-center">
+                          <span className="text-2xl font-black font-display tracking-tight">
+                            {environmentalImpactOutput.overallEnvScore}
+                          </span>
+                          <span className="text-[9px] font-mono text-slate-300">/ 100</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-sky-300 font-bold block">
+                          Composite Threat Level
+                        </span>
+                        <h4 className="text-base font-extrabold font-display leading-tight text-white">
+                          {environmentalImpactOutput.riskTier}
+                        </h4>
+                        <p className="text-[11px] text-slate-300 font-body leading-tight">
+                          Weighted multi-pillar index evaluating coastal proximity, mangrove nurseries, and water column toxicity.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* 5-Pillar Score Breakdown Progress Bars */}
+                    <div className="space-y-3 pt-1">
+                      <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block font-mono">
+                        Explainable Component Scores
+                      </span>
+
+                      {[
+                        { label: "Marine Surface Exposure", score: environmentalImpactOutput.marineExposureScore, color: "bg-[#1E5FBF]" },
+                        { label: "Coastal Proximity Vulnerability", score: environmentalImpactOutput.coastalProximityScore, color: "bg-rose-500" },
+                        { label: "Protected Area (MPA) Danger", score: environmentalImpactOutput.mpaVulnerabilityScore, color: "bg-emerald-500" },
+                        { label: "Commercial Fisheries Exposure", score: environmentalImpactOutput.fisheriesImpactScore, color: "bg-amber-500" },
+                        { label: "Water Column PAH Toxicity", score: environmentalImpactOutput.waterQualityPahScore, color: "bg-indigo-500" },
+                      ].map((p, idx) => (
+                        <div key={idx} className="space-y-1 text-xs">
+                          <div className="flex justify-between font-medium">
+                            <span className="text-slate-700">{p.label}</span>
+                            <span className="font-mono font-bold text-slate-900">{Math.round(p.score)}/100</span>
+                          </div>
+                          <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${p.color} rounded-full transition-all duration-500`}
+                              style={{ width: `${Math.min(100, Math.max(5, p.score))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* "WHY THIS IMPACT?" Panel */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center gap-2 pb-2 border-b border-[#E1EEF9]">
+                      <Brain className="w-4 h-4 text-[#1E5FBF]" />
+                      <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                        WHY THIS IMPACT? &mdash; FORENSIC ATTRIBUTION LOGIC
+                      </h3>
+                    </div>
+
+                    <div className="space-y-3">
+                      {environmentalImpactOutput.envExplanationPoints.map((pt, i) => (
+                        <div
+                          key={i}
+                          className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-1.5 transition-all hover:border-sky-200"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-[#0B2545] font-display">
+                              {pt.title}
+                            </span>
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                              pt.status.includes("CRITICAL")
+                                ? "bg-rose-100 text-rose-800"
+                                : pt.status.includes("HIGH") || pt.status.includes("ACTIVE")
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-sky-100 text-sky-800"
+                            }`}>
+                              {pt.status}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600 font-body leading-relaxed">
+                            {pt.detail}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Sensitive Ecological Zones List */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <Trees className="w-4 h-4 text-emerald-600" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Surveyed Marine Protected Areas &amp; Habitats
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400">Click to inspect</span>
+                    </div>
+
+                    <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                      {SENSITIVE_ECOLOGICAL_ZONES.map((zone) => {
+                        const isSelected = selectedEnvZoneId === zone.id;
+                        return (
+                          <div
+                            key={zone.id}
+                            onClick={() => setSelectedEnvZoneId(zone.id)}
+                            className={`p-3.5 rounded-xl border transition-all cursor-pointer space-y-1 ${
+                              isSelected
+                                ? "bg-emerald-50/60 border-emerald-400 ring-2 ring-emerald-300/40 shadow-xs"
+                                : "bg-[#F8FBFE] border-[#E1EEF9] hover:border-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-xs text-[#0B2545] font-display">
+                                {zone.name}
+                              </span>
+                              <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded">
+                                {zone.distanceKm} km away
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-600 font-body">
+                              <strong className="text-slate-800">Biome:</strong> {zone.type}
+                            </div>
+                            {isSelected && (
+                              <div className="pt-2 mt-2 border-t border-emerald-200/60 space-y-1 text-[11px] font-mono text-slate-600">
+                                <div>Key Species: <strong className="text-slate-800">{zone.keySpecies}</strong></div>
+                                <div>Shoreline Type: <span className="text-slate-700">{zone.shorelineType}</span></div>
+                                <div>Est. Ecological Recovery: <strong className="text-amber-700">{zone.recoveryYears}</strong></div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* RIGHT COLUMN: MAIN MAP VISUALIZATION + TIMELINE + HORIZON MATRIX (col-span-7) */}
+                <div className="lg:col-span-7 space-y-6">
+                  {/* Main Interactive Environmental Map Visualization */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <MapIcon className="w-4 h-4 text-emerald-600" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Environmental Spill Footprint &amp; Protected Habitat Advection Map
+                        </h3>
+                      </div>
+
+                      {/* 5-Step Timeline Selector (Current, +6h, +12h, +24h, +48h) */}
+                      <div className="flex items-center gap-1 bg-[#F0F7FD] p-1 rounded-xl border border-[#E1EEF9]">
+                        {(["Current", "+6h", "+12h", "+24h", "+48h"] as const).map((step) => {
+                          const isActive = envTimelineStep === step;
+                          return (
+                            <button
+                              key={step}
+                              onClick={() => {
+                                setEnvTimelineStep(step);
+                                triggerToast(`Environmental simulation shifted to ${step} forecast horizon`);
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                                isActive
+                                  ? "bg-emerald-600 text-white shadow-xs"
+                                  : "text-slate-600 hover:text-[#0B2545] hover:bg-white/80"
+                              }`}
+                            >
+                              {step}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Environmental GIS Map Canvas */}
+                    <div className="relative rounded-2xl overflow-hidden border border-slate-200">
+                      <AdvancedSpillMap
+                        simulationParams={{
+                          centroid: [18.69, 72.38],
+                          windSpeedKts: Number((whatIfWindSpeed * 1.94384).toFixed(1)),
+                          windDirDeg: whatIfWindDir,
+                          currentSpeedKts: Number((whatIfCurrentSpeed * 1.94384).toFixed(1)),
+                          currentDirDeg: 189,
+                          releaseVolumeM3: 18000,
+                          containmentEffPct: Math.min(90, Math.round((whatIfBoomLength / 5000) * 80)),
+                          chemicalDispersant: whatIfChemicalDispersant,
+                          responseDelayHours: envTimelineOffsetHours,
+                        }}
+                        height={440}
+                        onSelectVessel={(v) => {
+                          setSelectedCandidate(v);
+                          triggerToast(`Selected ${v.name} on environmental map`);
+                        }}
+                        onOpenReportModal={() => {
+                          setReportStage("environmental");
+                          setShowReportModal(true);
+                        }}
+                        onTriggerToast={triggerToast}
+                      />
+
+                      {/* Environmental Overlay Legend Badge */}
+                      <div className="absolute bottom-3 left-3 bg-[#0B2545]/90 backdrop-blur-md text-white p-3 rounded-xl border border-sky-400/30 text-xs font-mono space-y-1.5 z-20 shadow-xl max-w-xs">
+                        <div className="text-[10px] text-sky-300 font-bold uppercase">
+                          Forecast Horizon: {envTimelineStep} (T+{envTimelineOffsetHours}h)
+                        </div>
+                        <div className="space-y-1 text-[11px]">
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full bg-rose-500" />
+                            <span>Heavy Core: {environmentalImpactOutput.coreSlickAreaKm2} km²</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full bg-amber-400" />
+                            <span>Dispersed Exposure: {environmentalImpactOutput.totalExposureAreaKm2} km²</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            <span>Protected MPAs: {environmentalImpactOutput.affectedZonesCount} within plume</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Multi-Horizon Ecological Damage & Recovery Matrix */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-emerald-600" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Multi-Horizon Ecological Damage &amp; Recovery Trajectory
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-500">CPCB Marine Water Guidelines</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                      {/* Short-Term (0-72h) */}
+                      <div className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-rose-700 font-display">
+                            Short-Term (0 &ndash; 72h)
+                          </span>
+                          <span className="text-[10px] font-mono bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded font-bold">
+                            Acute
+                          </span>
+                        </div>
+                        <ul className="text-xs text-slate-600 space-y-1.5 list-disc list-inside font-body">
+                          <li>Surface film asphyxiation of pelagic ichthyoplankton</li>
+                          <li>Direct feather fouling of coastal shorebirds</li>
+                          <li>Dissolved aromatic hydrocarbon water-column surge</li>
+                        </ul>
+                      </div>
+
+                      {/* Medium-Term (3-30d) */}
+                      <div className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-amber-700 font-display">
+                            Medium-Term (3 &ndash; 30d)
+                          </span>
+                          <span className="text-[10px] font-mono bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">
+                            Sub-Acute
+                          </span>
+                        </div>
+                        <ul className="text-xs text-slate-600 space-y-1.5 list-disc list-inside font-body">
+                          <li>Mangrove pneumatophore coating &amp; salt-gland clogging</li>
+                          <li>Benthic sediment contamination in intertidal mudflats</li>
+                          <li>Trophic level bioaccumulation in artisanal fish catches</li>
+                        </ul>
+                      </div>
+
+                      {/* Long-Term (1-5y) */}
+                      <div className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-emerald-700 font-display">
+                            Long-Term (1 &ndash; 5y)
+                          </span>
+                          <span className="text-[10px] font-mono bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">
+                            Remediation
+                          </span>
+                        </div>
+                        <ul className="text-xs text-slate-600 space-y-1.5 list-disc list-inside font-body">
+                          <li>Sub-surface tar ball persistence in intertidal zones</li>
+                          <li>Multi-year recruitment deficit in Olive Ridley sea turtles</li>
+                          <li>Bioremediation &amp; marsh sediment flushing required</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Water-Quality Risk & Chemical Toxicity Indicators */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-[#1E5FBF]" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Water Quality Risk Indicators &amp; Chemical Thresholds
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono bg-sky-50 text-[#1E5FBF] px-2 py-0.5 rounded font-bold border border-sky-200">
+                        EPA Tier-1 Exceeded
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
+                      <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-1">
+                        <span className="text-slate-400 text-[10px] block">Dissolved PAH Concentration</span>
+                        <strong className="text-rose-600 text-sm block">8.4 µg/L (16.8x Limit)</strong>
+                        <span className="text-[10px] text-slate-500 font-sans">Safe Threshold: &lt; 0.5 µg/L</span>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-1">
+                        <span className="text-slate-400 text-[10px] block">Dissolved Oxygen (DO) Depletion</span>
+                        <strong className="text-amber-600 text-sm block">-42% in upper 5m</strong>
+                        <span className="text-[10px] text-slate-500 font-sans">Hypoxic boundary threat</span>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-1">
+                        <span className="text-slate-400 text-[10px] block">SAR Backscatter Damping (Δσ⁰)</span>
+                        <strong className="text-[#1E5FBF] text-sm block">-7.8 dB (Confirmed Mineral)</strong>
+                        <span className="text-[10px] text-emerald-700 font-sans">Biogenic films rejected</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ================================================================= */}
+          {/* TAB 4: ECONOMIC & COST IMPACT ANALYSIS LAB                        */}
+          {/* ================================================================= */}
+          {activeTab === "economic" && (
+            <div className="space-y-6 animate-fadeIn">
+              {/* 1. TOP COMMAND & FINANCIAL FORENSICS RIBBON */}
+              <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#0B2545] to-[#1E5FBF] flex items-center justify-center text-white shadow-md">
+                      <IndianRupee className="w-5 h-5 text-amber-300" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-sky-100 text-[#1E5FBF] border border-sky-200 uppercase">
+                          STAGE 15 &amp; 16: ECONOMIC &amp; FINANCIAL FORENSICS
+                        </span>
+                        <h2 className="text-sm sm:text-base font-bold text-[#0B2545] font-display">
+                          Economic, Clean-Up Cost &amp; Statutory Liability Forensics
+                        </h2>
+                      </div>
+                      <p className="text-xs text-slate-500 font-body mt-0.5">
+                        Comprehensive valuation of direct marine response expenditures, coastal remediation, port/fishery disruptions, and IOPC compensation limits.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      4 SCENARIO COMPARATIVE MODEL
+                    </span>
+                    <button
+                      onClick={() => {
+                        setReportStage("economic");
+                        setShowReportModal(true);
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white text-xs font-bold font-body flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+                      title="Generate certified economic impact PDF dossier"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Generate Economic Impact Report</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Financial Formula Callout Box */}
+                <div className="p-3.5 rounded-xl bg-sky-50/60 border border-sky-200 flex items-center justify-between flex-wrap gap-3 text-xs font-mono">
+                  <div className="flex items-center gap-2 text-[#0B2545] font-semibold flex-wrap">
+                    <span className="bg-white px-2 py-1 rounded border border-sky-200 text-[#1E5FBF]">
+                      DIRECT RESPONSE (₹{economicImpactOutput.totalDirectResponseCostCr} Cr)
+                    </span>
+                    <span>+</span>
+                    <span className="bg-white px-2 py-1 rounded border border-sky-200 text-emerald-700">
+                      RESTORATION (₹{economicImpactOutput.totalRestorationCostCr} Cr)
+                    </span>
+                    <span>+</span>
+                    <span className="bg-white px-2 py-1 rounded border border-sky-200 text-amber-700">
+                      ECONOMIC LOSS (₹{economicImpactOutput.totalEconomicLossMinCr} - ₹{economicImpactOutput.totalEconomicLossMaxCr} Cr)
+                    </span>
+                    <span>=</span>
+                    <span className="bg-[#0B2545] text-white px-2.5 py-1 rounded font-bold">
+                      TOTAL IMPACT (₹{economicImpactOutput.grandTotalMinCr} - ₹{economicImpactOutput.grandTotalMaxCr} Cr)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. TOP 4 DYNAMIC FINANCIAL KPI METRIC CARDS */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* KPI 1: Grand Total Financial Impact */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                        TOTAL ESTIMATED IMPACT
+                      </span>
+                      <IndianRupee className="w-4 h-4 text-[#1E5FBF]" />
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-extrabold text-[#0B2545] font-display mt-2">
+                      ₹{economicImpactOutput.grandTotalMinCr} <span className="text-sm font-semibold text-slate-500">&ndash; ₹{economicImpactOutput.grandTotalMaxCr} Cr</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>All 3 cost tiers</span>
+                    <span className="text-[10px] bg-sky-50 text-[#1E5FBF] px-1.5 py-0.5 rounded font-bold border border-sky-200">Confidence: 94%</span>
+                  </div>
+                </div>
+
+                {/* KPI 2: Direct Response & Skimming */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                        DIRECT RESPONSE &amp; SKIMMING
+                      </span>
+                      <Ship className="w-4 h-4 text-[#1E5FBF]" />
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-extrabold text-[#1E5FBF] font-display mt-2">
+                      ₹{economicImpactOutput.totalDirectResponseCostCr} <span className="text-base font-medium text-slate-500">Cr</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>Vessels: ₹{economicImpactOutput.vesselDeploymentCostCr} Cr</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold">Boom: ₹{economicImpactOutput.boomDeploymentCostCr} Cr</span>
+                  </div>
+                </div>
+
+                {/* KPI 3: Remediation & Restoration */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                        SHORELINE REMEDIATION
+                      </span>
+                      <Trees className="w-4 h-4 text-emerald-600" />
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-extrabold text-emerald-600 font-display mt-2">
+                      ₹{economicImpactOutput.totalRestorationCostCr} <span className="text-base font-medium text-slate-500">Cr</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>Mangrove Soil: ₹{(14.5 * (whatIfScenarioOutput.projectedArea24h / 19.8)).toFixed(1)} Cr</span>
+                    <span className="text-[10px] bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded font-bold">5yr Monitoring</span>
+                  </div>
+                </div>
+
+                {/* KPI 4: Cost Avoided by Early Response */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                        COST AVOIDED (EARLY ACTION)
+                      </span>
+                      <TrendingUp className="w-4 h-4 text-emerald-600" />
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700 font-display mt-2">
+                      ₹{economicImpactOutput.costAvoidedCr} <span className="text-base font-medium text-slate-500">Cr</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>vs. 8h Delayed Dispatch</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold border border-emerald-200">ROI: +340%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. 2-COLUMN MAIN ECONOMIC WORKBENCH GRID */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* LEFT COLUMN: 4-SCENARIO COST MODEL + CHARTS (col-span-5) */}
+                <div className="lg:col-span-5 space-y-6">
+                  {/* 4-Scenario Cost Model Comparison Table */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <Scale className="w-4 h-4 text-[#1E5FBF]" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Multi-Scenario Economic Cost Model
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400">Baseline vs What-If</span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {economicImpactOutput.costScenarios.map((sc, i) => (
+                        <div
+                          key={i}
+                          className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2 hover:border-sky-300 transition-all shadow-2xs"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-[#0B2545] font-display">
+                              {sc.scenario}
+                            </span>
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${sc.tagColor}`}>
+                              {sc.tag}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-xs font-mono pt-1">
+                            <div>
+                              <span className="text-slate-400 text-[10px] block font-sans">Direct Response:</span>
+                              <strong className="text-slate-800">{sc.directResponseCr}</strong>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 text-[10px] block font-sans">Remediation:</span>
+                              <strong className="text-slate-800">{sc.restorationCr}</strong>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 text-[10px] block font-sans">Economic Loss:</span>
+                              <span className="text-amber-700">{sc.economicLossCr}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 text-[10px] block font-sans">Total Est. Cost:</span>
+                              <strong className="text-[#0B2545] text-xs font-bold">{sc.totalCostCr}</strong>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-200/60 flex justify-between items-center text-xs font-mono">
+                            <span className="text-slate-500 font-sans">Differential vs Baseline:</span>
+                            <span className={sc.diffColor}>{sc.costDifferential}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Cost Breakdown by Response Category Bar Chart */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <PieChart className="w-4 h-4 text-[#1E5FBF]" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Cost Breakdown by Response Category (₹ Crores)
+                        </h3>
+                      </div>
+                    </div>
+
+                    <div className="h-56 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={economicImpactOutput.costBreakdownChartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+                          <XAxis dataKey="category" tick={{ fontSize: 9, fill: "#64748B" }} angle={-25} textAnchor="end" interval={0} />
+                          <YAxis tick={{ fontSize: 10, fill: "#64748B" }} unit=" Cr" />
+                          <RechartsTooltip formatter={(v: any) => [`₹${v} Cr`, "Estimated Cost"]} />
+                          <Bar dataKey="cost" radius={[4, 4, 0, 0]}>
+                            {economicImpactOutput.costBreakdownChartData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.fill} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Exponential Cost Escalation Curve (Cost vs Delay) */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-rose-500" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Cost Escalation vs. Response Delay (₹ Cr &amp; Days)
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono text-rose-600 bg-rose-50 px-2 py-0.5 rounded font-bold">
+                        Exponential Lag Penalty
+                      </span>
+                    </div>
+
+                    <div className="h-52 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={economicImpactOutput.delayCurveData} margin={{ top: 10, right: 20, left: -15, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                          <XAxis dataKey="delay" tick={{ fontSize: 9, fill: "#64748B" }} />
+                          <YAxis tick={{ fontSize: 10, fill: "#64748B" }} unit=" Cr" />
+                          <RechartsTooltip />
+                          <Line type="monotone" dataKey="cost" name="Estimated Cost (₹ Cr)" stroke="#EF4444" strokeWidth={2.5} dot={{ r: 4, fill: "#EF4444" }} />
+                          <Line type="monotone" dataKey="cleanupDays" name="Clean-up Duration (Days)" stroke="#1E5FBF" strokeWidth={2} strokeDasharray="3 3" dot={{ r: 3, fill: "#1E5FBF" }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* RIGHT COLUMN: ECONOMIC ASSET MAP + ASSET TABLE + IOPC FUND (col-span-7) */}
+                <div className="lg:col-span-7 space-y-6">
+                  {/* Economic Asset Proximity GIS Map */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-[#1E5FBF]" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Vulnerable Coastal Commercial Assets &amp; Navigation Fairways
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono bg-sky-50 text-[#1E5FBF] px-2 py-0.5 rounded font-bold border border-sky-200">
+                        5 Key Maritime Infrastructure Nodes
+                      </span>
+                    </div>
+
+                    {/* Embedded Mini Incident Map showing assets */}
+                    <div className="rounded-2xl overflow-hidden border border-slate-200 h-80">
+                      <IncidentMiniMap
+                        center={[18.69, 72.38]}
+                        vessels={dynamicMapVessels}
+                        cgAssets={dynamicMapAssets}
+                        forecastTrack={lagrangianOutput.forecastPath}
+                        onSelectVessel={(v) => {
+                          const match = candidates.find((c) => c.name === v.name || c.id === v.id);
+                          if (match) setSelectedCandidate(match);
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Detailed Economic Asset Exposure Table */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <Landmark className="w-4 h-4 text-emerald-600" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Maritime Infrastructure &amp; Economic Assets at Risk
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400">Click asset to inspect</span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {ECONOMIC_COASTAL_ASSETS.map((asset) => {
+                        const isSelected = selectedEconomicAssetId === asset.id;
+                        return (
+                          <div
+                            key={asset.id}
+                            onClick={() => setSelectedEconomicAssetId(asset.id)}
+                            className={`p-4 rounded-xl border transition-all cursor-pointer space-y-2 ${
+                              isSelected
+                                ? "bg-sky-50/70 border-[#1E5FBF] ring-2 ring-sky-300/40 shadow-xs"
+                                : "bg-[#F8FBFE] border-[#E1EEF9] hover:border-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <span className="font-bold text-xs text-[#0B2545] font-display">
+                                  {asset.name}
+                                </span>
+                                <span className="text-[11px] text-slate-500 font-body block">
+                                  {asset.type} &bull; {asset.location}
+                                </span>
+                              </div>
+                              <div className="text-right">
+                                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                                  asset.riskLevel.includes("HIGH")
+                                    ? "bg-rose-100 text-rose-800 border border-rose-200"
+                                    : "bg-amber-100 text-amber-800 border border-amber-200"
+                                }`}>
+                                  {asset.riskLevel}
+                                </span>
+                                <span className="text-xs font-mono font-bold text-rose-600 block mt-1">
+                                  Est. Loss: {asset.potentialLossCr}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] font-mono text-slate-600 pt-1 border-t border-slate-200/60">
+                              <div>Distance: <strong className="text-slate-800">{asset.distanceKm} km</strong></div>
+                              <div>Annual Traffic: <strong className="text-slate-800">{asset.annualTrafficValCr}</strong></div>
+                              <div className="col-span-2 sm:col-span-1">Impact: <span className="text-slate-700 truncate block">{asset.assetValue}</span></div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* IOPC Fund & Merchant Shipping Act Statutory Liability Allocation Matrix */}
+                  <div className="p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          IOPC Compensation Funds &amp; Merchant Shipping Act Liability
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded font-bold border border-emerald-200">
+                        MARPOL &amp; CLC Admissible
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 text-xs font-mono">
+                      {/* Tier 1 */}
+                      <div className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 block uppercase">
+                          Tier-1: Shipowner CLC Limit
+                        </span>
+                        <strong className="text-base font-extrabold text-[#0B2545] block">
+                          89.77M SDR
+                        </strong>
+                        <span className="text-[11px] text-slate-600 font-body block">
+                          ~ ₹980 Cr strict liability backed by P&amp;I Club financial guarantee (1992 CLC Protocol).
+                        </span>
+                      </div>
+
+                      {/* Tier 2 */}
+                      <div className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 block uppercase">
+                          Tier-2: 1992 IOPC Fund
+                        </span>
+                        <strong className="text-base font-extrabold text-[#1E5FBF] block">
+                          203M SDR
+                        </strong>
+                        <span className="text-[11px] text-slate-600 font-body block">
+                          ~ ₹2,215 Cr global oil receiver contributions if shipowner liability is exceeded.
+                        </span>
+                      </div>
+
+                      {/* Tier 3 */}
+                      <div className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 block uppercase">
+                          Tier-3: Supplementary Fund
+                        </span>
+                        <strong className="text-base font-extrabold text-emerald-700 block">
+                          750M SDR
+                        </strong>
+                        <span className="text-[11px] text-slate-600 font-body block">
+                          ~ ₹8,190 Cr disaster umbrella for catastrophic EEZ shoreline contamination.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ================================================================= */}
+          {/* TAB 5: MODEL CONFIDENCE & LOOK-ALIKE REJECTION LAB               */}
+          {/* ================================================================= */}
+          {activeTab === "confidence" && (
+            <div className="space-y-6 animate-fadeIn">
+              {/* TOP ROW: 4 PRIMARY METRIC CARDS (Matching Reference Screenshot) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* 1. Overall Segmentation Confidence */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                      OVERALL SEGMENTATION CONFIDENCE
+                    </div>
+                    <div className="text-3xl font-extrabold text-[#059669] font-display mt-2">
+                      {currentModelProfile.confidence.toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>{currentModelProfile.subModel}</span>
+                    <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded font-bold">F1: {currentModelProfile.f1Score}</span>
+                  </div>
+                </div>
+
+                {/* 2. False-Positive Rejection Rate */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                      FALSE-POSITIVE REJECTION RATE
+                    </div>
+                    <div className="text-3xl font-extrabold text-[#1E5FBF] font-display mt-2">
+                      {currentModelProfile.rejectionRate.toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>{currentModelProfile.rejectionSub}</span>
+                    <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded font-bold">45 Passes</span>
+                  </div>
+                </div>
+
+                {/* 3. SAR Image Processing Latency */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                      SAR IMAGE PROCESSING LATENCY
+                    </div>
+                    <div className="text-3xl font-extrabold text-[#0B2545] font-display mt-2">
+                      {currentModelProfile.latency}
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>{currentModelProfile.latencySub}</span>
+                    <span className="text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded font-bold">FP16</span>
+                  </div>
+                </div>
+
+                {/* 4. Validation Dataset Coverage */}
+                <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                      VALIDATION DATASET COVERAGE
+                    </div>
+                    <div className="text-3xl font-extrabold text-[#0B2545] font-display mt-2">
+                      {currentModelProfile.coverage}
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span>{currentModelProfile.coverageSub}</span>
+                    <span className="text-[10px] text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded font-bold">INCOIS</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* MIDDLE ROW: 2-COLUMN MAIN LAB VIEW (Line Chart Trend + Rejection Artifacts) */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                {/* LEFT PANEL: Detection Accuracy Trend (Last 7 Satellite Passes) */}
+                <div className="lg:col-span-7 p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
+                      <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-mono">
+                        DETECTION ACCURACY TREND (LAST 7 SATELLITE PASSES)
+                      </h3>
+                      <div className="flex items-center gap-3 text-[10px] font-mono text-slate-500">
+                        <span className="flex items-center gap-1">
+                          <span className="w-2.5 h-0.5 bg-[#10B981] border-b border-dashed border-[#10B981]" />
+                          Theoretical Upper Bound
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-[#1E5FBF]" />
+                          Satellite Pass Accuracy
                         </span>
                       </div>
                     </div>
 
-                    {/* Middle Column: Interactive Hindcast Map + Live Time Slider (5 cols) */}
-                    <div className="lg:col-span-5 bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-lg p-4 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-                          <div>
-                            <span className="font-display font-semibold text-xs text-[#0B2545] uppercase tracking-[0.06em]">
-                              Reverse Particle Trajectory vs SAR Slick
-                            </span>
-                            <div className="data-mono-sm font-mono flex items-center gap-1.5 mt-0.5">
-                              <span style={{ color: VESSEL_COLORS[selectedCandidate.id]?.primary || "#E11D48" }}>
-                                ● {selectedCandidate.name}
-                              </span>
-                              <span className="text-slate-400">&bull;</span>
-                              <span className="text-slate-500">{selectedCandidate.type}</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg text-xs font-semibold font-body">
+                    {/* Interactive Pass Selector Chips */}
+                    <div className="flex items-center justify-between gap-1.5 py-3 overflow-x-auto">
+                      <div className="flex items-center gap-1.5">
+                        {SATELLITE_ACCURACY_TREND.map((p) => {
+                          const isSelected = selectedSatellitePass === p.pass;
+                          return (
                             <button
-                              onClick={() => setActiveOverlayView("sideBySide")}
-                              className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                                activeOverlayView === "sideBySide"
-                                  ? "bg-white text-[#0B2545] shadow-xs"
-                                  : "text-slate-600"
+                              key={p.pass}
+                              onClick={() => {
+                                setSelectedSatellitePass(p.pass);
+                                triggerToast(`Inspecting SAR telemetry for pass ${p.pass}`);
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer ${
+                                isSelected
+                                  ? "bg-[#1E5FBF] text-white shadow-xs scale-105"
+                                  : "bg-[#F8FBFE] text-slate-600 hover:bg-[#E1EEF9] border border-[#E1EEF9]"
                               }`}
                             >
-                              Dual
+                              {p.pass}
                             </button>
-                            <button
-                              onClick={() => setActiveOverlayView("overlay")}
-                              className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                                activeOverlayView === "overlay"
-                                  ? "bg-white text-[#0B2545] shadow-xs"
-                                  : "text-slate-600"
-                              }`}
-                            >
-                              Overlap
-                            </button>
-                          </div>
-                        </div>
+                          );
+                        })}
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400 hidden sm:inline">
+                        Click pass or curve to inspect
+                      </span>
+                    </div>
 
-                        {/* Interactive Time-Offset Slider Bar */}
-                        <div className="mb-3 p-2.5 rounded-xl bg-[#F0F7FF] border border-sky-200">
-                          <div className="flex items-center justify-between text-xs mb-1 font-mono">
-                            <span className="text-slate-600 font-body font-semibold flex items-center gap-1">
-                              <Clock className="w-3.5 h-3.5 text-[#1E5FBF]" />
-                              Release Window Hindcast Offset:
-                            </span>
-                            <span className="font-bold text-[#1E5FBF]">
-                              {timeOffsetHours >= 0 ? `+${timeOffsetHours.toFixed(1)}h` : `${timeOffsetHours.toFixed(1)}h`}
-                            </span>
-                          </div>
-                          <input
-                            type="range"
-                            min="-3.0"
-                            max="3.0"
-                            step="0.5"
-                            value={timeOffsetHours}
-                            onChange={(e) => setTimeOffsetHours(parseFloat(e.target.value))}
-                            className="w-full accent-[#1E5FBF] cursor-pointer h-1.5 bg-sky-200 rounded-lg"
+                    {/* Recharts Line Chart */}
+                    <div className="h-64 w-full mt-1">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={SATELLITE_ACCURACY_TREND}
+                          margin={{ top: 15, right: 20, left: -10, bottom: 5 }}
+                          onClick={(e) => {
+                            if (e && e.activeLabel !== undefined) {
+                              const passStr = String(e.activeLabel);
+                              setSelectedSatellitePass(passStr);
+                              triggerToast(`Inspecting SAR telemetry for pass ${passStr}`);
+                            }
+                          }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+                          <XAxis
+                            dataKey="pass"
+                            tick={{ fontSize: 11, fill: "#64748B", fontFamily: "JetBrains Mono" }}
+                            axisLine={{ stroke: "#E2E8F0" }}
+                            tickLine={false}
                           />
-                          <div className="flex justify-between text-[10px] text-slate-400 font-mono mt-0.5">
-                            <span>-3.0h (Early)</span>
-                            <span className="font-bold text-[#0B2545]">T₀ (Nominal: 02:45 UTC)</span>
-                            <span>+3.0h (Late)</span>
-                          </div>
-                        </div>
-
-                        {/* Simulation Map Graphic */}
-                        <div className="min-h-[290px] bg-[#061220] rounded-xl relative overflow-hidden border border-[#172E4D] flex flex-col justify-between p-3 select-none shadow-inner">
-                          {/* Background Satellite SAR Radar Texture */}
-                          <img
-                            src="/sar-oil-spill-radar.jpg"
-                            alt="Sentinel-1 SAR Radar Analysis"
-                            className="absolute inset-0 w-full h-full object-cover opacity-40 mix-blend-screen pointer-events-none scale-105"
+                          <YAxis
+                            domain={[85, 100]}
+                            ticks={[85, 89, 93, 97, 100]}
+                            tickFormatter={(v) => `${v}%`}
+                            tick={{ fontSize: 10, fill: "#64748B", fontFamily: "JetBrains Mono" }}
+                            axisLine={{ stroke: "#E2E8F0" }}
+                            tickLine={false}
                           />
+                          <RechartsTooltip content={<CustomTrendTooltip />} />
+                          {/* Theoretical Baseline / Benchmark Dotted Green Line */}
+                          <Line
+                            type="monotone"
+                            dataKey="benchmark"
+                            name="Theoretical Baseline"
+                            stroke="#10B981"
+                            strokeWidth={2}
+                            strokeDasharray="4 4"
+                            dot={{ r: 3, fill: "#10B981", strokeWidth: 0 }}
+                            isAnimationActive={true}
+                          />
+                          {/* Satellite Pass Actual Blue Line with Interactive Dots */}
+                          <Line
+                            type="monotone"
+                            dataKey="actual"
+                            name="Satellite Pass Accuracy"
+                            stroke="#1E5FBF"
+                            strokeWidth={2.5}
+                            dot={{ r: 5, fill: "#1E5FBF", stroke: "#FFFFFF", strokeWidth: 2 }}
+                            activeDot={{ r: 7, fill: "#0B2545", stroke: "#1E5FBF", strokeWidth: 2 }}
+                            isAnimationActive={true}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
 
-                          {/* SVG Vector Canvas Over Simulation */}
-                          <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 460 280">
-                            {/* Tactical Geographic Coordinates Grid */}
-                            <g stroke="#1E5FBF" strokeWidth="0.5" opacity="0.3" strokeDasharray="4 4">
-                              <line x1="80" y1="0" x2="80" y2="280" />
-                              <line x1="180" y1="0" x2="180" y2="280" />
-                              <line x1="280" y1="0" x2="280" y2="280" />
-                              <line x1="380" y1="0" x2="380" y2="280" />
-                              <line x1="0" y1="60" x2="460" y2="60" />
-                              <line x1="0" y1="140" x2="460" y2="140" />
-                              <line x1="0" y1="220" x2="460" y2="220" />
-                            </g>
-
-                            {/* Coordinate Numbers */}
-                            <text x="85" y="14" fill="#38BDF8" fontSize="7.5" fontFamily="monospace" opacity="0.7">72&deg;30'E</text>
-                            <text x="185" y="14" fill="#38BDF8" fontSize="7.5" fontFamily="monospace" opacity="0.7">72&deg;40'E</text>
-                            <text x="285" y="14" fill="#38BDF8" fontSize="7.5" fontFamily="monospace" opacity="0.7">72&deg;50'E</text>
-                            <text x="385" y="14" fill="#38BDF8" fontSize="7.5" fontFamily="monospace" opacity="0.7">73&deg;00'E</text>
-                            <text x="4" y="65" fill="#38BDF8" fontSize="7.5" fontFamily="monospace" opacity="0.7">18&deg;55'N</text>
-                            <text x="4" y="145" fill="#38BDF8" fontSize="7.5" fontFamily="monospace" opacity="0.7">18&deg;45'N</text>
-                            <text x="4" y="225" fill="#38BDF8" fontSize="7.5" fontFamily="monospace" opacity="0.7">18&deg;35'N</text>
-
-                            {/* Bathymetry Shelf Lines */}
-                            <path d="M0,190 Q180,165 460,180" fill="none" stroke="#0284C7" strokeWidth="0.8" opacity="0.4" />
-                            <text x="390" y="175" fill="#0284C7" fontSize="6.5" fontFamily="monospace" opacity="0.6">50m ISO-BATH</text>
-
-                            {/* Reverse Lagrangian Particle Trajectory Stream (Dynamic with slider) */}
-                            <g opacity="0.85" transform={`translate(${timeOffsetHours * 6}, ${timeOffsetHours * 3})`}>
-                              <path d="M120,80 Q160,110 220,135 T320,160" fill="none" stroke="#38BDF8" strokeWidth="1.2" strokeDasharray="3 3" />
-                              <path d="M110,90 Q150,118 215,140 T315,168" fill="none" stroke="#38BDF8" strokeWidth="0.9" strokeDasharray="4 2" />
-                              <path d="M135,70 Q175,102 225,130 T328,152" fill="none" stroke="#38BDF8" strokeWidth="0.9" strokeDasharray="3 3" />
-                              {/* Particle markers */}
-                              {[
-                                [140, 95], [165, 110], [190, 122], [220, 136], [250, 145], [280, 154], [305, 160]
-                              ].map(([px, py], i) => (
-                                <circle key={i} cx={px} cy={py} r="1.8" fill="#38BDF8" opacity="0.9" />
-                              ))}
-                            </g>
-
-                            {/* Candidate Specific AIS Track & Reachability Envelope */}
-                            {selectedCandidate.rank === 1 ? (
-                              <g>
-                                <path
-                                  d="M60,40 L160,95 L220,135 L340,195 L420,240"
-                                  fill="none"
-                                  stroke="#F59E0B"
-                                  strokeWidth="2"
-                                  strokeDasharray="5 3"
-                                  opacity="0.85"
-                                />
-                                <circle cx="60" cy="40" r="3" fill="#38BDF8" />
-                                <circle cx="160" cy="95" r="3.5" fill="#E11D48" />
-                                <circle cx="340" cy="195" r="3" fill="#38BDF8" />
-
-                                {/* Critical AIS Silence Gap Highlight Sector */}
-                                <line x1="160" y1="95" x2="220" y2="135" stroke="#E11D48" strokeWidth="6" strokeLinecap="round" opacity="0.9" />
-                                <line x1="160" y1="95" x2="220" y2="135" stroke="#FEF08A" strokeWidth="2" strokeDasharray="3 3" />
-
-                                {/* AIS REACHABILITY ENVELOPE (Radius = Max Speed 14.5 kts x 94 min gap = 22.7 NM) */}
-                                <circle
-                                  cx="160"
-                                  cy="95"
-                                  r="92"
-                                  fill="rgba(225, 29, 72, 0.08)"
-                                  stroke="#E11D48"
-                                  strokeWidth="1.5"
-                                  strokeDasharray="6 4"
-                                />
-                                <text x="160" y="20" fill="#FDA4AF" fontSize="7.5" fontFamily="monospace" textAnchor="middle" fontWeight="bold">
-                                  AIS GAP REACHABILITY ENVELOPE (22.7 NM CONE)
-                                </text>
-
-                                {/* Warning Tag */}
-                                <rect x="135" y="70" width="118" height="18" rx="4" fill="#7F1D1D" stroke="#EF4444" strokeWidth="1" />
-                                <text x="194" y="82" fill="#FEF08A" fontSize="7.5" fontFamily="monospace" fontWeight="bold" textAnchor="middle">
-                                  CRITICAL AIS GAP: 94 MIN
-                                </text>
-                              </g>
-                            ) : (
-                              /* Non-Top Candidate Track with Non-Reaching Envelope */
-                              <g>
-                                <path
-                                  d="M40,240 L150,170 L280,100 L400,40"
-                                  fill="none"
-                                  stroke={VESSEL_COLORS[selectedCandidate.id]?.primary || "#94A3B8"}
-                                  strokeWidth="2"
-                                  strokeDasharray="5 3"
-                                  opacity="0.8"
-                                />
-                                <circle cx="150" cy="170" r="3.5" fill="#94A3B8" />
-                                <circle cx="280" cy="100" r="3.5" fill="#94A3B8" />
-                                {/* Reachability Envelope Missing Origin */}
-                                <circle
-                                  cx="280"
-                                  cy="100"
-                                  r="32"
-                                  fill="rgba(148, 163, 184, 0.08)"
-                                  stroke="#94A3B8"
-                                  strokeWidth="1.2"
-                                  strokeDasharray="4 3"
-                                />
-                                <text x="280" y="60" fill="#CBD5E1" fontSize="7" fontFamily="monospace" textAnchor="middle">
-                                  LIMITED ENVELOPE (MISSES ORIGIN BY {selectedCandidate.cpa})
-                                </text>
-                              </g>
-                            )}
-
-                            {/* Actual Observed Spill Boundary (Sentinel-1A SAR) */}
-                            <g transform="translate(220, 135) rotate(-24.6)">
-                              {/* Outer Sheen Aura */}
-                              <path
-                                d="M-85,0 Q-70,-45 0,-40 Q70,-35 85,0 Q70,45 0,40 Q-70,35 -85,0 Z"
-                                fill="none"
-                                stroke="#06B6D4"
-                                strokeWidth="1.5"
-                                opacity="0.6"
-                              />
-                              {/* Main Delineated Slick Polygon */}
-                              <path
-                                d="M-75,0 Q-60,-35 0,-32 Q60,-28 75,0 Q60,35 0,32 Q-60,28 -75,0 Z"
-                                fill="url(#observedSlickGradient)"
-                                stroke="#EF4444"
-                                strokeWidth="2"
-                                filter="drop-shadow(0 0 12px rgba(239,68,68,0.7))"
-                              />
-                              {/* Emulsion Core */}
-                              <path
-                                d="M-45,0 Q-35,-18 0,-16 Q35,-14 45,0 Q35,18 0,16 Q-35,14 -45,0 Z"
-                                fill="#7F1D1D"
-                                stroke="#F59E0B"
-                                strokeWidth="1"
-                                opacity="0.9"
-                              />
-                            </g>
-
-                            {/* Origin Reticle Point */}
-                            <g transform="translate(220, 135)">
-                              <circle cx="0" cy="0" r="3" fill="#FEF08A" />
-                              <circle cx="0" cy="0" r="7" fill="none" stroke="#FEF08A" strokeWidth="1" className="animate-ping" />
-                              <text x="9" y="3" fill="#FEF08A" fontSize="8" fontFamily="monospace" fontWeight="bold">
-                                ORIGIN (18.78&deg;N, 72.51&deg;E)
-                              </text>
-                            </g>
-
-                            {/* Gradient Definition */}
-                            <defs>
-                              <radialGradient id="observedSlickGradient" cx="50%" cy="50%" r="50%">
-                                <stop offset="0%" stopColor="#991B1B" stopOpacity="0.95" />
-                                <stop offset="45%" stopColor="#DC2626" stopOpacity="0.85" />
-                                <stop offset="85%" stopColor="#EA580C" stopOpacity="0.7" />
-                                <stop offset="100%" stopColor="#F59E0B" stopOpacity="0.4" />
-                              </radialGradient>
-                            </defs>
-                          </svg>
-
-                          {/* Top Floating HUD Callouts */}
-                          <div className="relative z-10 flex items-center justify-between">
-                            <div className="bg-[#0B2545]/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 text-white data-mono-sm font-mono flex items-center gap-2">
-                              <span className={`w-2 h-2 rounded-full ${selectedCandidate.rank === 1 ? "bg-emerald-400" : "bg-amber-400"} animate-pulse`} />
-                              <span>Correlation Variance: </span>
-                              <span className={`font-bold ${selectedCandidate.rank === 1 ? "text-emerald-400" : "text-amber-400"}`}>
-                                {liveCorrelation.discrepancy}% Discrepancy ({liveCorrelation.match}% Match)
-                              </span>
-                            </div>
-
-                            <div className="bg-black/70 backdrop-blur-xs px-2.5 py-1 rounded-lg border border-white/10 text-[9px] font-mono text-sky-200">
-                              {activeOverlayView === "overlay" ? "OVERLAY DIFF VIEW" : "DUAL RECONSTRUCTION"}
-                            </div>
-                          </div>
-
-                          {/* Bottom Floating Telemetry Bar */}
-                          <div className="relative z-10 flex items-center justify-between text-[9px] font-mono bg-[#0B1D35]/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/15 text-slate-300">
-                            <div className="flex items-center gap-2">
-                              <span className="text-amber-300 font-bold">{liveCorrelation.timeLabel}</span>
-                              <span className="text-slate-400">&bull;</span>
-                              <span className="text-sky-300">INCOIS Current: 0.82 kts</span>
-                            </div>
-                            <div className={`font-bold ${selectedCandidate.rank === 1 ? "text-emerald-400" : "text-amber-400"}`}>
-                              Status: {liveCorrelation.status}
-                            </div>
-                          </div>
+                  {/* Dynamic Inspected Satellite Pass Telemetry Banner */}
+                  {activePassData && (
+                    <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] flex items-center justify-between flex-wrap gap-3">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-[#0B2545] font-display">
+                            {activePassData.pass === "Current" ? "🔴 Live Satellite Pass" : `Pass ${activePassData.pass}`}: {activePassData.sensor}
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold border border-emerald-200">
+                            {activePassData.actual}% Confirmed Accuracy
+                          </span>
                         </div>
+                        <p className="text-[11px] text-slate-500 font-mono">
+                          {activePassData.date} &bull; Wind: <strong className="text-slate-700">{activePassData.windSpeed}</strong> &bull; Res: <strong className="text-slate-700">{activePassData.resolution}</strong> &bull; Pol: <strong className="text-slate-700">{activePassData.polarization}</strong>
+                        </p>
+                      </div>
+                      <div className="text-right text-[11px] font-mono">
+                        <span className="text-slate-500">Backscatter Damping: </span>
+                        <strong className="text-[#1E5FBF] font-bold">{activePassData.dampingDb}</strong>
+                        <div className="text-[10px] text-emerald-700 font-semibold">{activePassData.rejectionStatus}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* RIGHT PANEL: Look-Alike Rejection Artifacts (Matching Screenshot) */}
+                <div className="lg:col-span-5 p-6 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] flex flex-col justify-between space-y-4">
+                  <div className="space-y-3.5">
+                    <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
+                      <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-mono">
+                        LOOK-ALIKE REJECTION ARTIFACTS
+                      </h3>
+                      <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        3/3 Filters Online
+                      </span>
+                    </div>
+
+                    {/* 3 Rejection Artifact Items matching screenshot */}
+                    <div className="space-y-3">
+                      {/* Item 1: Low-Wind Calm Ocean */}
+                      <div className="p-3.5 rounded-xl bg-white border border-[#E1EEF9] hover:border-emerald-300 transition-all shadow-xs space-y-1.5 group">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-xs text-slate-800 font-display group-hover:text-[#1E5FBF] transition-colors">
+                            Low-Wind Calm Ocean (Wind &lt; 2.5 m/s)
+                          </span>
+                          <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 whitespace-nowrap">
+                            Rejected (Non-Hazard)
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 font-body leading-relaxed">
+                          Specular reflection causes dark radar patches; rejected using ERA5 10m wind threshold.
+                        </p>
                       </div>
 
-                      <div className="mt-3 body-description text-xs sm:text-[13px] text-slate-600 leading-relaxed font-body">
-                        Lagrangian reverse advection simulates backward dispersion envelopes to determine if vessel kinematics overlap with the Sentinel-1 SAR observation.
+                      {/* Item 2: Biogenic Natural Slick */}
+                      <div className="p-3.5 rounded-xl bg-white border border-[#E1EEF9] hover:border-emerald-300 transition-all shadow-xs space-y-1.5 group">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-xs text-slate-800 font-display group-hover:text-[#1E5FBF] transition-colors">
+                            Biogenic Natural Slick (Algal Bloom)
+                          </span>
+                          <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 whitespace-nowrap">
+                            Rejected (Biological)
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 font-body leading-relaxed">
+                          Natural monomolecular surfactant layer; rejected via VV/VH dual-pol cross-ratio.
+                        </p>
+                      </div>
+
+                      {/* Item 3: Internal Gravity Waves */}
+                      <div className="p-3.5 rounded-xl bg-white border border-[#E1EEF9] hover:border-emerald-300 transition-all shadow-xs space-y-1.5 group">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-xs text-slate-800 font-display group-hover:text-[#1E5FBF] transition-colors">
+                            Internal Gravity Waves
+                          </span>
+                          <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 whitespace-nowrap">
+                            Filtered (Wave Artifact)
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 font-body leading-relaxed">
+                          Periodic dark and bright linear bands; rejected by spatiotemporal Fourier texture filter.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Neural Backbone Footer Note (Matching Reference Screenshot) */}
+                  <div className="pt-3 border-t border-slate-100">
+                    <p className="text-[11px] font-mono text-slate-500 leading-relaxed">
+                      Neural Backbone: {currentModelProfile.backboneDesc}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* DYNAMIC INTERACTION: AI ARCHITECTURE SWITCHER & REJECTION SANDBOX BAR */}
+              <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-[#1E5FBF]" />
+                    <h4 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                      Neural Model Architecture &amp; Rejection Diagnostics
+                    </h4>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(["Adaptive U-Net v2.1", "Swin-Transformer v2", "ResNet-50 FPN Dual-Pol"] as const).map((modelName) => (
+                      <button
+                        key={modelName}
+                        onClick={() => {
+                          setSelectedModelArch(modelName);
+                          triggerToast(`Switched inference pipeline to ${modelName}`);
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold font-mono transition-all cursor-pointer ${
+                          selectedModelArch === modelName
+                            ? "bg-[#0B2545] text-white shadow-xs scale-105"
+                            : "bg-[#F8FBFE] text-slate-600 border border-[#E1EEF9] hover:bg-[#E1EEF9]"
+                        }`}
+                      >
+                        {modelName}
+                      </button>
+                    ))}
+
+                    <button
+                      onClick={() => setShowSandbox(!showSandbox)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold font-body flex items-center gap-1.5 transition-all cursor-pointer ${
+                        showSandbox
+                          ? "bg-amber-100 text-amber-900 border border-amber-300"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
+                      }`}
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                      <span>{showSandbox ? "Hide Sandbox" : "Live Rejection Sandbox"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Live Rejection Sandbox Drawer */}
+                {showSandbox && (
+                  <div className="p-4 rounded-xl bg-amber-50/50 border border-amber-200 space-y-3 animate-fadeIn">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-900 font-display">
+                        Interactive Look-Alike Filter Simulation Sandbox
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-800">
+                        Adjust telemetry to observe automated rejection triggers
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+                      {/* Wind Speed Simulator */}
+                      <div className="space-y-1.5 bg-white p-3 rounded-lg border border-amber-200">
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-600 font-sans font-semibold">Simulate Ocean Wind:</span>
+                          <strong className={simulatedRejectionWind < 2.5 ? "text-rose-600 font-bold" : "text-emerald-700 font-bold"}>
+                            {simulatedRejectionWind.toFixed(1)} m/s {simulatedRejectionWind < 2.5 ? "(REJECTED: Calm Ocean)" : "(VALID Bragg Waves)"}
+                          </strong>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="12.0"
+                          step="0.1"
+                          value={simulatedRejectionWind}
+                          onChange={(e) => setSimulatedRejectionWind(parseFloat(e.target.value))}
+                          className="w-full accent-amber-600 cursor-pointer"
+                        />
+                        <p className="text-[10px] text-slate-500 font-sans">
+                          {simulatedRejectionWind < 2.5
+                            ? "⚠️ Wind < 2.5 m/s triggers specular mirror reflection rejection filter."
+                            : "✅ Sufficient wind (> 2.5 m/s) ensures reliable capillary radar backscatter contrast."}
+                        </p>
+                      </div>
+
+                      {/* Polarization Cross-Ratio Simulator */}
+                      <div className="space-y-1.5 bg-white p-3 rounded-lg border border-amber-200">
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-600 font-sans font-semibold">Simulate VV/VH Ratio:</span>
+                          <strong className={simulatedCrossPolDb > -4.0 ? "text-amber-600 font-bold" : "text-emerald-700 font-bold"}>
+                            {simulatedCrossPolDb.toFixed(1)} dB {simulatedCrossPolDb > -4.0 ? "(REJECTED: Biological Surfactant)" : "(VALID Mineral Hydrocarbon)"}
+                          </strong>
+                        </div>
+                        <input
+                          type="range"
+                          min="-12.0"
+                          max="0.0"
+                          step="0.2"
+                          value={simulatedCrossPolDb}
+                          onChange={(e) => setSimulatedCrossPolDb(parseFloat(e.target.value))}
+                          className="w-full accent-amber-600 cursor-pointer"
+                        />
+                        <p className="text-[10px] text-slate-500 font-sans">
+                          {simulatedCrossPolDb > -4.0
+                            ? "⚠️ Dual-pol ratio indicates monomolecular biological film (algal bloom)."
+                            : "✅ Low cross-polarization ratio confirms heavy petroleum damping signature."}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Toggle to view 7D Evidentiary Attribution Spectrum & Component Weights */}
+                <div className="border-t border-[#E1EEF9] pt-3 flex items-center justify-between flex-wrap gap-2">
+                  <button
+                    onClick={() => setShowAttributionDeepDive(!showAttributionDeepDive)}
+                    className="text-xs font-bold text-[#1E5FBF] hover:text-[#0B2545] flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Target className="w-3.5 h-3.5" />
+                    <span>
+                      {showAttributionDeepDive
+                        ? "Hide 7D Evidentiary Radar Spectrum & MARPOL Proof Weights"
+                        : "Expand 7D Evidentiary Radar Spectrum & MARPOL Proof Weights Table"}
+                    </span>
+                    {showAttributionDeepDive ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+
+                  <span className="text-[11px] font-mono text-slate-500">
+                    F1-Score: <strong className="text-emerald-700">{currentModelProfile.f1Score}</strong> &bull; IoU: <strong className="text-emerald-700">{currentModelProfile.iouScore}</strong> &bull; Framework: <strong className="text-[#0B2545]">{currentModelProfile.framework || "TensorRT"}</strong>
+                  </span>
+                </div>
+
+                {/* Expandable 7D Evidentiary Radar & Component Attribution Weights */}
+                {showAttributionDeepDive && (
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-3 animate-fadeIn">
+                    {/* Radar Chart */}
+                    <div className="lg:col-span-6 p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <h5 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          7D Evidentiary Radar Spectrum
+                        </h5>
+                        <span className="text-xs font-mono font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                          Score: {modelConfidenceBreakdown.overallConfidence}%
+                        </span>
+                      </div>
+                      <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <RadarChart data={modelConfidenceBreakdown.radarData}>
+                            <PolarGrid stroke="#CBD5E1" />
+                            <PolarAngleAxis dataKey="metric" tick={{ fontSize: 10, fill: "#475569" }} />
+                            <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 8 }} />
+                            <Radar name={selectedCandidate.name} dataKey="candidate" stroke="#E11D48" fill="#E11D48" fillOpacity={0.4} />
+                            <Radar name="Baseline Benchmark" dataKey="benchmark" stroke="#1E5FBF" fill="#1E5FBF" fillOpacity={0.15} />
+                            <Legend wrapperStyle={{ fontSize: 10 }} />
+                            <RechartsTooltip />
+                          </RadarChart>
+                        </ResponsiveContainer>
                       </div>
                     </div>
 
-                    {/* Right Column: Evidence Breakdown & Dynamic Assessment (4 cols) */}
-                    <div className="lg:col-span-4 bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-lg p-4 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9] mb-3">
-                          <span className="font-display font-semibold text-xs text-[#0B2545] uppercase tracking-[0.06em]">
-                            Evidence Score Breakdown
-                          </span>
-                          <span
-                            className={`badge-text px-2 py-0.5 rounded-full border text-[11px] font-bold ${
-                              selectedCandidate.rank === 1
-                                ? "bg-rose-100 text-rose-700 border-rose-200"
-                                : "bg-amber-100 text-amber-700 border-amber-200"
-                            }`}
-                          >
-                            Physics: {selectedCandidate.rank === 1 ? "HIGH CONSISTENCY" : "LOW MATCH"}
-                          </span>
-                        </div>
-
-                        {/* Recharts Bar Chart */}
-                        <div className="h-44 w-full font-body">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart
-                              data={candidateEvidenceData}
-                              margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                            >
-                              <XAxis dataKey="name" tick={{ fontSize: 9.5, fontFamily: "Inter" }} />
-                              <YAxis domain={[0, 100]} tick={{ fontSize: 9.5, fontFamily: "Inter" }} />
-                              <Tooltip />
-                              <Bar dataKey="score" radius={[4, 4, 0, 0]}>
-                                {candidateEvidenceData.map((entry, index) => (
-                                  <Cell
-                                    key={`cell-${index}`}
-                                    fill={entry.color}
-                                  />
-                                ))}
-                              </Bar>
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </div>
-
-                        {/* Detailed Assessment Note */}
-                        <div className="mt-3 p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] leading-relaxed font-body">
-                          <div className="font-semibold text-xs text-[#0B2545] mb-1.5 uppercase tracking-wide flex items-center justify-between">
-                            <span>Attribution Probability:</span>
-                            <span
-                              className="font-mono font-bold text-sm"
-                              style={{ color: VESSEL_COLORS[selectedCandidate.id]?.primary || "#E11D48" }}
-                            >
-                              {selectedCandidate.score}%
-                            </span>
-                          </div>
-                          {selectedCandidate.rank === 1 ? (
-                            <p className="body-description text-xs text-slate-700 leading-relaxed font-body">
-                              Vessel transited through the core discharge polygon. Speed drop to 1.4 kts correlates with 94 min transponder gap right along the central slick centroid. Hydrodynamic match is optimal ({liveCorrelation.match}% IoU).
-                            </p>
-                          ) : (
-                            <div className="space-y-1 text-xs text-slate-700 font-body">
-                              <p className="font-semibold text-slate-800">
-                                {CANDIDATE_FORENSIC_EXPLANATIONS[selectedCandidate.id]?.verdict}:
-                              </p>
-                              <p className="text-slate-600">
-                                {CANDIDATE_FORENSIC_EXPLANATIONS[selectedCandidate.id]?.summary}
-                              </p>
-                            </div>
-                          )}
-                        </div>
+                    {/* Component Breakdown Table */}
+                    <div className="lg:col-span-6 p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
+                      <div className="flex items-center justify-between pb-2 border-b border-[#E1EEF9]">
+                        <h5 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Component Attribution Weights
+                        </h5>
+                        <span className="text-[10px] font-mono text-slate-500">
+                          MARPOL Annex I Proof Standards
+                        </span>
                       </div>
-
-                      {/* Disclaimer */}
-                      <div className="mt-4 pt-3 border-t border-[#E1EEF9] micro-text text-slate-400 font-body leading-tight">
-                        &bull; <span className="font-semibold">Legal Note:</span> Probabilistic intelligence evidence generated under IMO guidelines &mdash; not legal proof of liability.
+                      <div className="overflow-x-auto rounded-lg border border-[#E1EEF9] bg-white">
+                        <table className="w-full text-left text-xs font-body">
+                          <thead className="bg-[#0B2545] text-white text-[10px] font-bold uppercase tracking-wider font-mono">
+                            <tr>
+                              <th className="p-2">Evidentiary Pillar</th>
+                              <th className="p-2">Weight</th>
+                              <th className="p-2">Score</th>
+                              <th className="p-2 text-right">Contribution</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#E1EEF9] text-slate-700">
+                            {modelConfidenceBreakdown.radarData.map((row, i) => {
+                              const weights = [0.2, 0.15, 0.2, 0.15, 0.15, 0.15, 0.1];
+                              const weight = weights[i] || 0.15;
+                              const contrib = (row.candidate * weight).toFixed(1);
+                              return (
+                                <tr key={i} className="hover:bg-[#F8FBFE]">
+                                  <td className="p-2 font-semibold text-[#0B2545]">{row.metric}</td>
+                                  <td className="p-2 font-mono text-slate-500">{(weight * 100).toFixed(0)}%</td>
+                                  <td className="p-2 font-mono font-bold text-slate-800">{row.candidate.toFixed(1)}%</td>
+                                  <td className="p-2 font-mono font-bold text-rose-600 text-right">+{contrib}%</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   </div>
                 )}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* =============================================================== */}
-            {/* TAB 2: WHAT-IF SIMULATOR (Stage 18 - Priority #1)               */}
-            {/* =============================================================== */}
-            {activeTab === "whatif" && (
-              <div className="space-y-5 animate-fadeIn">
-                {/* Top Control Panel with Live Interactive Assumption Sliders */}
-                <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-lg p-5">
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-[#E1EEF9]">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="badge-text px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-bold text-[10px]">
-                          STAGE 18: REAL-TIME SIMULATOR
-                        </span>
-                        <h2 className="heading-secondary text-[#0B2545]">
-                          Predictive Response Scenario Simulator
-                        </h2>
-                      </div>
-                      <p className="body-description text-xs sm:text-[14px] text-slate-600 mt-1 font-body leading-relaxed">
-                        Adjust environmental assumptions and response delays below to re-run the hydrodynamic containment model live across all 3 tactical operational plans.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => {
-                          setSimWindSpeedKts(14.2);
-                          setSimDeployDelayHours(2.0);
-                          setSimBoomMeters(1500);
-                          triggerToast("Assumption sliders reset to operational baseline.");
-                        }}
-                        className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span>Reset Defaults</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          triggerToast("Optimal strategy applied to Active Incident Response Plan.");
-                          navigate("/incidents/IN-MH-2026");
-                        }}
-                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white btn-text shadow-sm flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Apply Selected Strategy</span>
-                      </button>
-                    </div>
+          {/* ================================================================= */}
+          {/* TAB 4: HISTORICAL ANALOGUE BENCHMARKING                           */}
+          {/* ================================================================= */}
+          {activeTab === "historical" && (
+            <div className="space-y-6 animate-fadeIn">
+              {/* TOP ROW: 4 HISTORICAL BENCHMARK KPI SUMMARY CARDS */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] flex flex-col justify-between">
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono block">
+                      TOP HISTORICAL ANALOGUE
+                    </span>
+                    <span className="text-xl font-extrabold text-[#0B2545] font-display mt-1 block">
+                      MSC Chitra (2010)
+                    </span>
                   </div>
-
-                  {/* 3 Interactive Assumption Sliders */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-1">
-                    {/* Slider 1: Wind Speed */}
-                    <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-sky-100 space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-[#0B2545] flex items-center gap-1.5">
-                          <Wind className="w-3.5 h-3.5 text-[#1E5FBF]" />
-                          Surface Wind Speed (ECMWF):
-                        </span>
-                        <span className="data-mono font-bold text-[#1E5FBF] font-mono">
-                          {simWindSpeedKts.toFixed(1)} kts
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="5.0"
-                        max="30.0"
-                        step="0.5"
-                        value={simWindSpeedKts}
-                        onChange={(e) => setSimWindSpeedKts(parseFloat(e.target.value))}
-                        className="w-full accent-[#1E5FBF] cursor-pointer h-1.5 bg-sky-200 rounded-lg"
-                      />
-                      <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                        <span>5 kts (Calm)</span>
-                        <span>14.2 kts (Baseline)</span>
-                        <span>30 kts (Squall)</span>
-                      </div>
-                    </div>
-
-                    {/* Slider 2: Response Delay */}
-                    <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-sky-100 space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-[#0B2545] flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-amber-600" />
-                          Asset Mobilization Delay:
-                        </span>
-                        <span className="data-mono font-bold text-amber-600 font-mono">
-                          +{simDeployDelayHours.toFixed(1)} Hours
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0.0"
-                        max="8.0"
-                        step="0.5"
-                        value={simDeployDelayHours}
-                        onChange={(e) => setSimDeployDelayHours(parseFloat(e.target.value))}
-                        className="w-full accent-amber-600 cursor-pointer h-1.5 bg-amber-200 rounded-lg"
-                      />
-                      <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                        <span>0h (Immediate)</span>
-                        <span>2.0h (Baseline)</span>
-                        <span>8h (High Delay)</span>
-                      </div>
-                    </div>
-
-                    {/* Slider 3: Boom Capacity */}
-                    <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-sky-100 space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-[#0B2545] flex items-center gap-1.5">
-                          <Anchor className="w-3.5 h-3.5 text-emerald-600" />
-                          Containment Boom Length:
-                        </span>
-                        <span className="data-mono font-bold text-emerald-600 font-mono">
-                          {simBoomMeters} meters
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="500"
-                        max="3000"
-                        step="100"
-                        value={simBoomMeters}
-                        onChange={(e) => setSimBoomMeters(parseInt(e.target.value))}
-                        className="w-full accent-emerald-600 cursor-pointer h-1.5 bg-emerald-200 rounded-lg"
-                      />
-                      <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                        <span>500m (Light)</span>
-                        <span>1500m (Standard)</span>
-                        <span>3000m (Heavy Barrier)</span>
-                      </div>
-                    </div>
+                  <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-mono">
+                    <span className="text-slate-500">Hydrodynamic Match</span>
+                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-bold">89.4% Match</span>
                   </div>
+                </div>
 
-                  {/* Dynamic Recommendation Banner */}
-                  <div className="mt-4 p-3 rounded-xl bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border border-emerald-200 text-xs text-emerald-950 font-body flex items-start gap-2.5">
-                    <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="text-emerald-900 font-semibold">AI Recommendation (Live Recalculated):</strong>{" "}
-                      <span>{dynamicRecommendation}</span>
-                    </div>
+                <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] flex flex-col justify-between">
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono block">
+                      DISPERSION SWELL VARIANCE
+                    </span>
+                    <span className="text-xl font-extrabold text-[#1E5FBF] font-display mt-1 block">
+                      +12.4% Drift Velocity
+                    </span>
                   </div>
+                  <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-mono">
+                    <span className="text-slate-500">Monsoon Amplification</span>
+                    <span className="text-sky-700 bg-sky-50 px-2 py-0.5 rounded font-bold">Hs = 1.8m Swell</span>
+                  </div>
+                </div>
 
-                  {/* 3 Scenario Cards Side-by-Side with Map Thumbnails & Ranges */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
-                    {dynamicScenarios.map((sc) => {
-                      const isSel = selectedStrategyId === sc.id;
-                      return (
-                        <div
-                          key={sc.id}
-                          onClick={() => setSelectedStrategyId(sc.id)}
-                          className={`p-5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                            sc.recommended
-                              ? "bg-gradient-to-b from-emerald-50/40 to-white border-emerald-300 ring-2 ring-emerald-400/30 shadow-md"
-                              : isSel
-                              ? "bg-white border-[#1E5FBF] ring-2 ring-[#1E5FBF]/20 shadow-md"
-                              : "bg-[#F8FBFE] border-[#E1EEF9] hover:bg-white hover:shadow-sm"
-                          }`}
-                        >
-                          <div>
-                            <div className="flex items-center justify-between mb-2">
-                              {sc.recommended ? (
-                                <span className="badge-text px-2.5 py-0.5 rounded-full bg-emerald-600 text-white shadow-2xs font-body">
-                                  ★ RECOMMENDED
-                                </span>
-                              ) : (
-                                <span className="badge-text px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-body">
-                                  Alternative Plan
-                                </span>
-                              )}
-                              <span className="data-mono text-xs font-bold text-[#0B2545] font-mono">
-                                {sc.score}/100 Score
-                              </span>
-                            </div>
+                <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] flex flex-col justify-between">
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono block">
+                      HISTORICAL CONTAINMENT MEAN
+                    </span>
+                    <span className="text-xl font-extrabold text-amber-600 font-display mt-1 block">
+                      64.7% Average
+                    </span>
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-mono">
+                    <span className="text-slate-500">Target Efficiency</span>
+                    <span className="text-amber-800 bg-amber-50 px-2 py-0.5 rounded font-bold">&gt; 85% with Boom</span>
+                  </div>
+                </div>
 
-                            <h3 className="heading-section text-sm sm:text-base text-[#0B2545]">{sc.name}</h3>
-                            <p className="body-description text-xs text-slate-600 mt-1 leading-relaxed font-body">{sc.desc}</p>
-
-                            {/* Containment Boundary Mini-Map Thumbnail SVG */}
-                            <div className="my-3 h-28 bg-[#0B1D35] rounded-xl relative overflow-hidden border border-slate-700 p-1 flex items-center justify-center">
-                              <svg className="w-full h-full" viewBox="0 0 240 100">
-                                {/* Shoreline representation (right side) */}
-                                <path d="M210,0 Q200,40 215,70 T205,100" fill="none" stroke="#D97706" strokeWidth="2.5" />
-                                <text x="235" y="55" fill="#D97706" fontSize="6.5" fontFamily="monospace" textAnchor="end">COAST</text>
-
-                                {/* Offshore Oil Slick Polygon */}
-                                {sc.id === "strat-1" ? (
-                                  <g transform="translate(100, 50)">
-                                    <ellipse cx="0" cy="0" rx="35" ry="18" fill="rgba(239, 68, 68, 0.4)" stroke="#EF4444" strokeWidth="1.2" />
-                                    {/* Containment Boom Arc encloses slick */}
-                                    <path d="M-15,-22 Q40,0 -15,22" fill="none" stroke="#10B981" strokeWidth="2.5" strokeDasharray="3 2" />
-                                    <circle cx="35" cy="0" r="3" fill="#10B981" />
-                                    <text x="-40" y="30" fill="#34D399" fontSize="6.5" fontFamily="monospace">BOOM SECURED</text>
-                                  </g>
-                                ) : sc.id === "strat-2" ? (
-                                  <g transform="translate(140, 50)">
-                                    {/* Widely dispersed slick touching coast */}
-                                    <path d="M-60,-15 Q0,-30 45,0 Q0,30 -60,15 Z" fill="rgba(239, 68, 68, 0.6)" stroke="#EF4444" strokeWidth="1.5" />
-                                    <line x1="20" y1="-25" x2="40" y2="-5" stroke="#E11D48" strokeWidth="2" strokeDasharray="2 2" />
-                                    <text x="-50" y="32" fill="#F87171" fontSize="6.5" fontFamily="monospace">SHORELINE BREACH</text>
-                                  </g>
-                                ) : (
-                                  <g transform="translate(110, 50)">
-                                    <ellipse cx="-10" cy="0" rx="40" ry="20" fill="rgba(239, 68, 68, 0.35)" stroke="#EF4444" strokeWidth="1" />
-                                    {/* Focused barrier protecting nursery zone */}
-                                    <path d="M25,-25 Q45,0 25,25" fill="none" stroke="#0EA5E9" strokeWidth="2.5" />
-                                    <text x="-45" y="32" fill="#38BDF8" fontSize="6.5" fontFamily="monospace">ZONE A SHIELD</text>
-                                  </g>
-                                )}
-                              </svg>
-                            </div>
-
-                            {/* Predicted Outcome Metrics with Best/Worst-Case Uncertainty Ranges */}
-                            <div className="pt-2 border-t border-slate-100 space-y-2 text-xs font-mono">
-                              <div className="flex justify-between items-center">
-                                <span className="text-slate-500 font-body text-xs">Coastline Impact Range:</span>
-                                <span
-                                  className={`data-mono font-bold font-mono ${
-                                    parseFloat(sc.worstImpact) < 10
-                                      ? "text-emerald-600"
-                                      : parseFloat(sc.worstImpact) < 25
-                                      ? "text-amber-600"
-                                      : "text-rose-600"
-                                  }`}
-                                >
-                                  {sc.bestImpact}% &ndash; {sc.worstImpact}%
-                                </span>
-                              </div>
-
-                              <div className="flex justify-between items-center">
-                                <span className="text-slate-500 font-body text-xs">Spill Extent Range:</span>
-                                <span className="data-mono font-bold text-[#0B2545] font-mono">
-                                  {sc.bestArea} &ndash; {sc.worstArea} km²
-                                </span>
-                              </div>
-
-                              <div className="flex justify-between items-center">
-                                <span className="text-slate-500 font-body text-xs">Time to Contain:</span>
-                                <span className="data-mono font-bold text-[#0B2545] font-mono">
-                                  {sc.bestTime} &ndash; {sc.worstTime} h
-                                </span>
-                              </div>
-
-                              <div className="flex justify-between items-center">
-                                <span className="text-slate-500 font-body text-xs">Estimated Cost:</span>
-                                <span className="data-mono font-bold text-slate-700 font-mono">
-                                  ₹{sc.bestCost} &ndash; ₹{sc.worstCost}L
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="mt-4 pt-3 border-t border-slate-100">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedStrategyId(sc.id);
-                                triggerToast(`Scenario ${sc.name} locked as operational basis.`);
-                              }}
-                              className={`w-full py-1.5 rounded-xl btn-text transition-all cursor-pointer ${
-                                isSel
-                                  ? "bg-[#0B2545] text-white"
-                                  : sc.recommended
-                                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                                  : "bg-white border border-[#E1EEF9] hover:bg-slate-50 text-slate-700"
-                              }`}
-                            >
-                              {isSel ? "Selected Strategy" : "Select Strategy"}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                <div className="p-4 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.06)] flex flex-col justify-between">
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-mono block">
+                      LEGAL SETTLEMENT PRECEDENT
+                    </span>
+                    <span className="text-xl font-extrabold text-rose-600 font-display mt-1 block">
+                      ₹138 Cr Claims
+                    </span>
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-mono">
+                    <span className="text-slate-500">Ennore Spill Case</span>
+                    <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded font-bold">Admiralty Court</span>
                   </div>
                 </div>
               </div>
-            )}
 
-            {/* =============================================================== */}
-            {/* TAB 3: MODEL CONFIDENCE                                         */}
-            {/* =============================================================== */}
-            {activeTab === "confidence" && (
-              <div className="space-y-5 animate-fadeIn">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  {[
-                    { label: "Overall Segmentation Confidence", val: "94.6%", sub: "Adaptive U-Net v2.1", color: "text-emerald-600" },
-                    { label: "False-Positive Rejection Rate", val: "98.2%", sub: "Biogenic films & wind shadows", color: "text-[#1E5FBF]" },
-                    { label: "SAR Image Processing Latency", val: "4.2 min", sub: "Cloud GPU TensorRT Pipeline", color: "text-indigo-600" },
-                    { label: "Validation Dataset Coverage", val: "1,420 km²", sub: "West Coast Indian EEZ ground truth", color: "text-slate-700" },
-                  ].map((stat, i) => (
-                    <div key={i} className="p-4 rounded-2xl bg-white/90 backdrop-blur-md border border-[#E1EEF9] shadow-sm">
-                      <div className="micro-text font-semibold text-slate-400 uppercase tracking-wider font-body">
-                        {stat.label}
-                      </div>
-                      <div className={`kpi-number text-2xl sm:text-3xl ${stat.color} mt-1`}>{stat.val}</div>
-                      <div className="data-mono-sm text-slate-500 font-mono mt-0.5">{stat.sub}</div>
+              {/* MAIN HISTORICAL BENCHMARK WORKBENCH */}
+              <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[#E1EEF9]">
+                  <div className="flex items-center gap-2">
+                    <History className="w-4 h-4 text-[#1E5FBF]" />
+                    <div>
+                      <h2 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                        Historical Maritime Pollution Analogues &amp; Incident Case Benchmarks
+                      </h2>
+                      <p className="text-[11px] text-slate-500 font-body">
+                        Select a historical incident record below to perform a live differential forensic comparison against Active Case IN-MH-2026.
+                      </p>
                     </div>
-                  ))}
+                  </div>
+
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {[
+                      { id: "ALL", label: `All (${HISTORICAL_INCIDENTS.length})` },
+                      { id: "ARABIAN", label: "Arabian Sea (West Coast)" },
+                      { id: "BAY_OF_BENGAL", label: "Bay of Bengal" },
+                      { id: "INDIAN_OCEAN", label: "Indian Ocean" },
+                      { id: "HIGH_SEVERITY", label: "Critical Severity" },
+                    ].map((btn) => (
+                      <button
+                        key={btn.id}
+                        onClick={() => {
+                          setHistoricalFilter(btn.id);
+                          triggerToast(`Filtered analogues by: ${btn.label}`);
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition-all cursor-pointer ${
+                          historicalFilter === btn.id
+                            ? "bg-[#0B2545] text-white shadow-xs"
+                            : "bg-[#F8FBFE] text-slate-600 hover:bg-[#E1EEF9] border border-[#E1EEF9]"
+                        }`}
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                {/* Model Trend Chart + Clickable Rejection Artifacts */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-                  <div className="lg:col-span-7 bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-lg p-5">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-display font-semibold text-xs text-[#0B2545] uppercase tracking-[0.06em]">
-                        Detection Accuracy Trend (Last 7 Satellite Passes)
-                      </h3>
-                      <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                        Target Bar: 92.0% Admissibility Threshold
+                {/* Interactive Comparison Table */}
+                <div className="overflow-x-auto rounded-xl border border-[#E1EEF9]">
+                  <table className="w-full text-left text-xs font-body">
+                    <thead className="bg-[#0B2545] text-white text-[10px] font-bold uppercase tracking-wider font-mono">
+                      <tr>
+                        <th className="p-3">Incident Reference</th>
+                        <th className="p-3">Location &amp; Sector</th>
+                        <th className="p-3">Spill Area &amp; Volume</th>
+                        <th className="p-3">Vessel &amp; Type</th>
+                        <th className="p-3">Attribution Mechanism</th>
+                        <th className="p-3">Containment</th>
+                        <th className="p-3 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E1EEF9] text-slate-700">
+                      {/* Active Live Incident Row */}
+                      <tr className="bg-rose-50/50 font-semibold border-b-2 border-rose-200">
+                        <td className="p-3">
+                          <div className="flex items-center gap-1.5 text-rose-700 font-bold">
+                            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                            <span>IN-MH-2026 (Active Case)</span>
+                          </div>
+                          <span className="text-[10px] font-mono text-slate-500">12 Sep 2026</span>
+                        </td>
+                        <td className="p-3 text-slate-800">Mumbai High Offshore (18.69°N, 72.38°E)</td>
+                        <td className="p-3 font-mono font-bold text-rose-600">14.2 km² (48,000 m³)</td>
+                        <td className="p-3">
+                          <span className="font-bold text-[#0B2545]">{selectedCandidate.name}</span>
+                          <span className="text-[10px] text-slate-500 block font-mono">IMO {selectedCandidate.imo}</span>
+                        </td>
+                        <td className="p-3 text-rose-700 font-mono">7D AIS Kinematics + SAR (98.8%)</td>
+                        <td className="p-3 font-mono text-emerald-700 font-bold">86.0% (Simulated)</td>
+                        <td className="p-3 text-right">
+                          <span className="text-[10px] font-mono bg-rose-100 text-rose-800 px-2 py-0.5 rounded font-bold border border-rose-200">
+                            Active Baseline
+                          </span>
+                        </td>
+                      </tr>
+
+                      {/* Filtered Historical Analogue Rows */}
+                      {filteredHistoricalIncidents.map((hi: HistoricalIncident) => {
+                        const isSelected = selectedHistoricalId === hi.id;
+                        return (
+                          <tr
+                            key={hi.id}
+                            onClick={() => {
+                              setSelectedHistoricalId(hi.id);
+                              triggerToast(`Loaded comparison for ${hi.name}`);
+                            }}
+                            className={`transition-all cursor-pointer ${
+                              isSelected
+                                ? "bg-sky-50/80 border-l-4 border-l-[#1E5FBF]"
+                                : "hover:bg-[#F8FBFE]"
+                            }`}
+                          >
+                            <td className="p-3">
+                              <div className="font-semibold text-[#0B2545] flex items-center gap-1.5">
+                                {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-[#1E5FBF]" />}
+                                <span>{hi.name}</span>
+                              </div>
+                              <span className="text-[10px] font-mono text-slate-500">{hi.date} ({hi.year})</span>
+                            </td>
+                            <td className="p-3 text-slate-600">{hi.location}</td>
+                            <td className="p-3 font-mono font-semibold text-slate-800">
+                              {hi.spillAreaKm2} km² <span className="text-slate-500 font-normal">({hi.spillVolumeTonnes} MT)</span>
+                            </td>
+                            <td className="p-3">
+                              <span className="font-semibold text-slate-800">{hi.vesselName}</span>
+                              <span className="text-[10px] text-slate-500 block">{hi.vesselType} ({hi.flag})</span>
+                            </td>
+                            <td className="p-3 text-slate-600 text-[11px] max-w-[200px] truncate" title={hi.primaryCause}>
+                              {hi.primaryCause}
+                            </td>
+                            <td className="p-3 font-mono text-emerald-700 font-semibold">{hi.containmentRate}%</td>
+                            <td className="p-3 text-right">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedHistoricalId(hi.id);
+                                  triggerToast(`Loaded comparison for ${hi.name}`);
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer ${
+                                  isSelected
+                                    ? "bg-[#0B2545] text-white shadow-xs"
+                                    : "bg-white border border-[#E1EEF9] text-slate-700 hover:bg-[#E1EEF9]"
+                                }`}
+                              >
+                                {isSelected ? "Comparing" : "Compare"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* SIDE-BY-SIDE FORENSIC DIFFERENTIAL COMPARISON CARD */}
+                {selectedHistoricalIncident && (
+                  <div className="p-5 rounded-2xl bg-[#F8FBFE] border border-sky-200 space-y-4 animate-fadeIn">
+                    <div className="flex items-center justify-between pb-2 border-b border-sky-200 flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <GitCompare className="w-4 h-4 text-[#1E5FBF]" />
+                        <h3 className="text-xs font-bold text-[#0B2545] uppercase tracking-wider font-display">
+                          Side-by-Side Forensic Differential: Active Case IN-MH-2026 vs. {selectedHistoricalIncident.name}
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono bg-sky-100 text-sky-800 px-2 py-0.5 rounded font-bold border border-sky-300">
+                        Historical Severity Score: {selectedHistoricalIncident.severityScore}/100
                       </span>
                     </div>
 
-                    <div className="h-60 w-full font-body">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={modelHistoryData} margin={{ top: 15, right: 20, left: 0, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#E1EEF9" />
-                          <XAxis dataKey="pass" tick={{ fontSize: 10, fontFamily: "Inter" }} />
-                          <YAxis domain={[85, 100]} unit="%" tick={{ fontSize: 10, fontFamily: "Inter" }} />
-                          <Tooltip />
-                          <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "5px" }} />
-                          {/* Reference Line for IMO Minimum Confidence Threshold */}
-                          <ReferenceLine
-                            y={92.0}
-                            stroke="#E11D48"
-                            strokeDasharray="4 4"
-                            strokeWidth={1.5}
-                            label={{ value: "IMO Admissibility Bar (92%)", fill: "#E11D48", fontSize: 10, position: "insideTopLeft" }}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="confidence"
-                            name="Confidence Score"
-                            stroke="#1E5FBF"
-                            strokeWidth={2.5}
-                            dot={{ r: 4 }}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="fpRejection"
-                            name="False Positive Rejection"
-                            stroke="#10B981"
-                            strokeWidth={2}
-                            strokeDasharray="4 4"
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-
-                    {/* Expandable Technical Model Metrics Deep-Dive Button */}
-                    <div className="mt-4 pt-3 border-t border-slate-100">
-                      <button
-                        onClick={() => setShowFullModelMetrics(!showFullModelMetrics)}
-                        className="w-full flex items-center justify-between text-xs font-semibold text-[#1E5FBF] hover:text-[#0B2545] transition-colors cursor-pointer py-1"
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <Cpu className="w-4 h-4" />
-                          <span>{showFullModelMetrics ? "Hide Deep Technical Model Metrics & Confusion Matrix" : "View Full Model Metrics & Technical Validation (Confusion Matrix)"}</span>
-                        </span>
-                        {showFullModelMetrics ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                      </button>
-
-                      {/* Expandable Technical Panel */}
-                      {showFullModelMetrics && (
-                        <div className="mt-3 p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-4 animate-fadeIn text-xs">
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono">
-                            <div className="p-2 bg-white rounded-lg border border-slate-200">
-                              <div className="text-slate-400 text-[10px]">Precision:</div>
-                              <div className="font-bold text-[#0B2545] text-sm">96.4%</div>
-                            </div>
-                            <div className="p-2 bg-white rounded-lg border border-slate-200">
-                              <div className="text-slate-400 text-[10px]">Recall:</div>
-                              <div className="font-bold text-[#0B2545] text-sm">93.1%</div>
-                            </div>
-                            <div className="p-2 bg-white rounded-lg border border-slate-200">
-                              <div className="text-slate-400 text-[10px]">F1-Score:</div>
-                              <div className="font-bold text-emerald-600 text-sm">94.7%</div>
-                            </div>
-                            <div className="p-2 bg-white rounded-lg border border-slate-200">
-                              <div className="text-slate-400 text-[10px]">Mean IoU:</div>
-                              <div className="font-bold text-[#1E5FBF] text-sm">89.2%</div>
-                            </div>
-                          </div>
-
-                          {/* 2x2 Confusion Matrix */}
-                          <div>
-                            <div className="font-semibold text-slate-700 mb-1.5 font-body">Pixel-Level Confusion Matrix (1,420 km² Ground-Truth Validation):</div>
-                            <table className="w-full border-collapse border border-slate-200 text-center font-mono text-[11px] bg-white rounded-lg overflow-hidden">
-                              <thead>
-                                <tr className="bg-slate-100 text-slate-600">
-                                  <th className="p-1.5 border border-slate-200">Class</th>
-                                  <th className="p-1.5 border border-slate-200">Predicted Oil</th>
-                                  <th className="p-1.5 border border-slate-200">Predicted Non-Oil</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                <tr>
-                                  <td className="p-1.5 font-semibold bg-slate-50 border border-slate-200 text-left">Actual Oil</td>
-                                  <td className="p-1.5 border border-slate-200 text-emerald-700 font-bold bg-emerald-50/50">142 km² (TP - 93.1%)</td>
-                                  <td className="p-1.5 border border-slate-200 text-rose-700 bg-rose-50/30">11 km² (FN - 6.9%)</td>
-                                </tr>
-                                <tr>
-                                  <td className="p-1.5 font-semibold bg-slate-50 border border-slate-200 text-left">Actual Non-Oil</td>
-                                  <td className="p-1.5 border border-slate-200 text-amber-700 bg-amber-50/30">3 km² (FP - 1.9%)</td>
-                                  <td className="p-1.5 border border-slate-200 text-blue-700 font-bold bg-blue-50/50">812 km² (TN - 98.1%)</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-
-                          <div className="text-[11px] text-slate-500 font-mono">
-                            TensorRT FP16 Pipeline Latency: SAR Ingest (45s) &bull; U-Net Segment (78s) &bull; Hydrodynamic Coupling (95s) = 4.2 min total swath.
-                          </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-body">
+                      {/* Left: Active Case Parameters */}
+                      <div className="p-4 rounded-xl bg-white border border-[#E1EEF9] space-y-2.5 shadow-xs">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                          <span className="font-bold text-rose-700 uppercase font-display flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-rose-500" />
+                            Active Case IN-MH-2026 (Live)
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-500">Arabian Sea Sector</span>
                         </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Clickable Look-Alike Rejection Artifacts */}
-                  <div className="lg:col-span-5 bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-lg p-5 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="font-display font-semibold text-xs text-[#0B2545] uppercase tracking-[0.06em]">
-                          Look-Alike Rejection Artifacts
-                        </h3>
-                        <span className="text-[10px] text-slate-400 font-body">Click card to inspect SAR patch</span>
+                        <div className="space-y-1.5 font-mono text-[11px]">
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Spill Area:</span><strong className="text-slate-800">14.2 km² (48,000 m³)</strong></div>
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Response Time:</span><strong className="text-emerald-700">2.0 Hours (Automated AI Trigger)</strong></div>
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Containment Efficiency:</span><strong className="text-emerald-700">86.0% (With Rapid Boom Deployment)</strong></div>
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Suspect Vessel:</span><strong className="text-[#0B2545]">{selectedCandidate.name} (IMO {selectedCandidate.imo})</strong></div>
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Attribution Certainty:</span><strong className="text-rose-600">98.8% (7D Kinematic + SAR Verification)</strong></div>
+                        </div>
                       </div>
 
-                      <div className="space-y-2.5 text-xs font-body">
-                        {LOOK_ALIKE_ARTIFACTS.map((ex) => (
-                          <div
-                            key={ex.id}
-                            onClick={() => setSelectedArtifactModal(ex)}
-                            className="p-3 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE] hover:bg-sky-50/70 hover:border-sky-300 transition-all cursor-pointer group shadow-2xs"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="font-semibold text-[#0B2545] font-body text-xs group-hover:text-[#1E5FBF] transition-colors flex items-center gap-1.5">
-                                <Eye className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#1E5FBF]" />
-                                {ex.title}
-                              </span>
-                              <span className={`badge-text px-2 py-0.5 rounded-full border text-[10px] font-bold ${ex.badgeColor}`}>
-                                {ex.badge}
-                              </span>
-                            </div>
-                            <p className="body-description text-xs text-slate-600 mt-1 leading-relaxed font-body">
-                              {ex.reason}
-                            </p>
-                            <div className="mt-1.5 flex items-center justify-between text-[10px] font-mono text-slate-400">
-                              <span>Confidence: <strong className="text-emerald-600">{ex.confidence}%</strong></span>
-                              <span className="text-[#1E5FBF] group-hover:underline">Inspect Radar Patch &rarr;</span>
-                            </div>
-                          </div>
-                        ))}
+                      {/* Right: Selected Historical Analogue */}
+                      <div className="p-4 rounded-xl bg-white border border-[#E1EEF9] space-y-2.5 shadow-xs">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                          <span className="font-bold text-[#0B2545] uppercase font-display flex items-center gap-1.5">
+                            <History className="w-3.5 h-3.5 text-amber-500" />
+                            {selectedHistoricalIncident.name}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-500">{selectedHistoricalIncident.region}</span>
+                        </div>
+                        <div className="space-y-1.5 font-mono text-[11px]">
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Spill Area / Volume:</span><strong className="text-slate-800">{selectedHistoricalIncident.spillAreaKm2} km² ({selectedHistoricalIncident.spillVolumeTonnes} MT)</strong></div>
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Response Time:</span><strong className="text-amber-700">{selectedHistoricalIncident.responseTimeHours} Hours</strong></div>
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Containment Efficiency:</span><strong className="text-slate-700">{selectedHistoricalIncident.containmentRate}%</strong></div>
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Vessel &amp; Flag:</span><strong className="text-[#0B2545]">{selectedHistoricalIncident.vesselName} ({selectedHistoricalIncident.flag})</strong></div>
+                          <div className="flex justify-between"><span className="text-slate-500 font-sans">Attribution Certainty:</span><strong className="text-emerald-700">{selectedHistoricalIncident.attributionCertainty}%</strong></div>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-[#E1EEF9] data-mono-sm text-slate-400 font-mono">
-                      Neural Backbone: ResNet-50 Feature Pyramid Network with Dual-Pol Complex Tensor Layers.
+                    {/* Historical Mitigation Takeaway & Lessons Learned */}
+                    <div className="p-3.5 rounded-xl bg-white border border-sky-100 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span className="text-xs font-bold text-[#0B2545] font-display">
+                          Historical Precedent Lessons &amp; Operational Directives
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 font-body leading-relaxed">
+                        <strong className="text-slate-800 font-semibold">Key Lesson:</strong> {selectedHistoricalIncident.keyLesson}
+                      </p>
+                      <div className="text-[11px] text-slate-500 font-mono pt-1 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                        <span>Legal Outcome: <strong className="text-emerald-700 font-semibold">{selectedHistoricalIncident.legalOutcome}</strong></span>
+                        <span className="text-slate-400">Environmental Impact: {selectedHistoricalIncident.environmentalImpact}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* =============================================================== */}
-            {/* TAB 4: HISTORICAL COMPARISON                                    */}
-            {/* =============================================================== */}
-            {activeTab === "historical" && (
-              <div className="space-y-5 animate-fadeIn">
-                {/* Incident vs Historical Track Record Benchmark */}
-                <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-lg p-5">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E1EEF9] mb-4">
+          {/* ================================================================= */}
+          {/* TAB 5: EVIDENCE TRACEABILITY & CHAIN OF CUSTODY                   */}
+          {/* ================================================================= */}
+          {activeTab === "traceability" && (
+            <div className="space-y-6 animate-fadeIn">
+              {/* TOP MERKLE ROOT & DIGITAL CHAIN OF CUSTODY BANNER */}
+              <div className="p-5 rounded-2xl bg-white border border-[#E1EEF9] shadow-[0_4px_20px_rgba(30,95,191,0.08)] space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9] flex-wrap gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#0B2545] to-[#1E5FBF] flex items-center justify-center text-white shadow-md">
+                      <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                    </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="badge-text px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 font-bold text-[10px]">
-                          HISTORICAL BENCHMARK MATRIX
-                        </span>
-                        <h2 className="heading-secondary text-[#0B2545]">
-                          Case IN-MH-2026 vs Historical Track Record
+                        <h2 className="text-sm sm:text-base font-bold text-[#0B2545] font-display">
+                          Evidence Traceability &amp; Digital Chain-of-Custody Log
                         </h2>
+                        <span className="text-[10px] font-mono bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold border border-emerald-200">
+                          6 SHA-256 Records Verified
+                        </span>
                       </div>
-                      <p className="body-description text-xs sm:text-[14px] text-slate-600 mt-1 font-body leading-relaxed">
-                        Is this incident's forensic evidence stronger or weaker than past major Indian Ocean maritime disasters?
+                      <p className="text-xs text-slate-500 font-body mt-0.5">
+                        Every telemetry packet, satellite pass, and hydrodynamic simulation is cryptographically hashed and anchored under IMO MARPOL Annex I evidentiary standards.
                       </p>
                     </div>
-                    <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center gap-2">
-                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                      <span>Evidence Strength: <strong>Top 98th Percentile</strong></span>
-                    </div>
                   </div>
 
-                  {/* Comparative Track Record Metrics Bars */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                    {benchmarkComparisonData.map((bm, i) => (
-                      <div key={i} className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] space-y-2">
-                        <div className="text-xs font-semibold text-[#0B2545] font-body">{bm.metric}</div>
-                        <div className="flex items-baseline justify-between">
-                          <div className="text-xl font-bold font-mono text-[#1E5FBF]">
-                            {bm.thisCase}{bm.unit}
-                          </div>
-                          <div className="text-xs text-slate-400 font-mono">
-                            Hist Avg: {bm.historicalAvg}{bm.unit}
-                          </div>
-                        </div>
-                        {/* Comparison progress bar */}
-                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex">
-                          <div
-                            className="bg-[#1E5FBF] h-full rounded-full transition-all"
-                            style={{ width: `${Math.min(100, bm.thisCase)}%` }}
-                          />
-                        </div>
-                        <div className="text-[10px] text-emerald-700 font-semibold">
-                          +{((bm.thisCase - bm.historicalAvg)).toFixed(1)}{bm.unit} stronger than track record
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Historical Table Header */}
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3">
-                    <span className="font-display font-semibold text-xs text-[#0B2545] uppercase tracking-[0.06em]">
-                      Interactive Past Incident Comparator (Select Any 2)
-                    </span>
-                    <span className="data-mono text-xs font-semibold text-[#1E5FBF] font-mono">
-                      Comparing {comparedIncidents.length} of 2 selected
-                    </span>
-                  </div>
-
-                  {/* Historical Table */}
-                  <div className="border border-[#E1EEF9] rounded-xl overflow-hidden bg-white mb-6">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="table-header bg-[#F8FBFE] border-b border-[#E1EEF9] text-slate-500 uppercase tracking-wider text-[10px]">
-                          <th className="p-3 w-10 text-center font-semibold">Compare</th>
-                          <th className="p-3 font-semibold">Incident Name &amp; Year</th>
-                          <th className="p-3 font-semibold">Location / Region</th>
-                          <th className="p-3 font-semibold">Severity</th>
-                          <th className="p-3 font-semibold">Volume (Tonnes)</th>
-                          <th className="p-3 font-semibold">Response Time</th>
-                          <th className="p-3 font-semibold">Containment %</th>
-                        </tr>
-                      </thead>
-                      <tbody className="table-body divide-y divide-slate-100 text-xs font-body">
-                        {HISTORICAL_INCIDENTS.map((h) => {
-                          const isChecked = selectedHistIds.includes(h.id);
-                          return (
-                            <tr
-                              key={h.id}
-                              onClick={() => handleToggleHist(h.id)}
-                              className={`hover:bg-slate-50 cursor-pointer transition-colors ${
-                                isChecked ? "bg-[#EFF6FD]" : ""
-                              }`}
-                            >
-                              <td className="p-3 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => handleToggleHist(h.id)}
-                                  className="rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
-                                />
-                              </td>
-                              <td className="p-3 font-semibold text-[#0B2545]">
-                                <div>{h.name}</div>
-                                <div className="data-mono-sm text-slate-400 font-mono mt-0.5">{h.vesselName} ({h.flag})</div>
-                              </td>
-                              <td className="p-3 text-slate-600 font-body">{h.location}</td>
-                              <td className="p-3">
-                                <span
-                                  className={`badge-text px-2 py-0.5 rounded-full border ${
-                                    h.severity === "Critical"
-                                      ? "bg-rose-50 text-rose-700 border-rose-200"
-                                      : "bg-amber-50 text-amber-700 border-amber-200"
-                                  }`}
-                                >
-                                  {h.severity}
-                                </span>
-                              </td>
-                              <td className="p-3 data-mono font-bold text-slate-700 font-mono">
-                                {h.spillVolumeTonnes.toLocaleString()} t
-                              </td>
-                              <td className="p-3 data-mono text-slate-600 font-mono">{h.responseTimeHours} hrs</td>
-                              <td className="p-3 data-mono font-bold text-emerald-600 font-mono">
-                                {h.containmentRate}%
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Side-by-Side Comparison Cards */}
-                  {comparedIncidents.length === 2 && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-4 border-t border-[#E1EEF9]">
-                      {comparedIncidents.map((inc) => (
-                        <div
-                          key={inc.id}
-                          className="p-5 rounded-2xl border border-[#E1EEF9] bg-[#F8FBFE] shadow-sm space-y-3"
-                        >
-                          <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                            <div>
-                              <h3 className="heading-section text-sm text-[#0B2545]">{inc.name}</h3>
-                              <div className="data-mono-sm text-slate-500 font-mono mt-0.5">
-                                {inc.date} &bull; {inc.location}
-                              </div>
-                            </div>
-                            <span className="data-mono text-xs font-bold text-rose-600 font-mono">
-                              {inc.spillAreaKm2} km² Slick
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-2 text-xs font-mono bg-white p-3 rounded-xl border border-slate-200">
-                            <div className="data-mono-sm">Response Time: <span className="font-bold text-[#0B2545]">{inc.responseTimeHours}h</span></div>
-                            <div className="data-mono-sm">Containment: <span className="font-bold text-emerald-600">{inc.containmentRate}%</span></div>
-                            <div className="data-mono-sm">Attribution: <span className="font-bold text-[#1E5FBF]">{inc.attributionCertainty}%</span></div>
-                            <div className="data-mono-sm">Spill Volume: <span className="font-bold text-slate-700">{inc.spillVolumeTonnes} t</span></div>
-                          </div>
-
-                          <div className="body-text text-xs text-slate-700 space-y-1 font-body">
-                            <div className="font-semibold text-[#0B2545] text-xs">Legal Outcome:</div>
-                            <p className="body-description text-xs sm:text-[13px] text-slate-700 leading-relaxed font-body">{inc.legalOutcome}</p>
-                          </div>
-
-                          <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-900 font-body">
-                            <div className="font-semibold text-[#0B2545] mb-0.5">Key Architectural Lesson: </div>
-                            <p className="body-description text-xs sm:text-[13px] text-sky-900 leading-relaxed">{inc.keyLesson}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* =============================================================== */}
-            {/* TAB 5: EXECUTIVE REPORTS & FORENSIC DOSSIERS                    */}
-            {/* =============================================================== */}
-            {activeTab === "reports" && (
-              <div className="space-y-6 animate-fadeIn">
-                {/* Header Hero Banner */}
-                <div className="bg-gradient-to-r from-[#0B2545] via-[#123A66] to-[#1E5FBF] text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-96 h-96 bg-sky-400/10 rounded-full blur-3xl pointer-events-none" />
-                  <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-                    <div className="max-w-2xl space-y-2">
-                      <div className="flex flex-wrap items-center gap-2 font-body">
-                        <span className="badge-text px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                          Official &bull; Restricted
-                        </span>
-                        <span className="badge-text px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-200 border border-sky-400/30">
-                          MARPOL Annex I Court-Admissible
-                        </span>
-                        <span className="badge-text px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                          SHA-256 Merkle Verified
-                        </span>
-                      </div>
-                      <h2 className="heading-page text-white text-2xl sm:text-3xl">
-                        Forensic Intelligence &amp; Dossier Center
-                      </h2>
-                      <p className="body-description text-sm sm:text-[15px] text-sky-100/90 leading-relaxed font-body">
-                        Compile verified multi-modal evidence across satellite SAR segmentation, backward hydrodynamic trajectory, AIS kinematic anomalies, and 7-dimension statistical confidence scores into statutory Indian Coast Guard and UNCLOS-compliant dossiers.
-                      </p>
-                    </div>
-
-                    <div className="shrink-0 flex flex-col sm:flex-row gap-3">
-                      <button
-                        onClick={handleDownloadCustomPdf}
-                        disabled={isExportingPdf}
-                        className="px-6 py-3 rounded-2xl bg-gradient-to-r from-sky-400 to-blue-600 hover:from-sky-300 hover:to-blue-500 text-white btn-text flex items-center justify-center gap-2.5 shadow-lg shadow-sky-950/50 transition-all cursor-pointer disabled:opacity-50"
-                      >
-                        <Download className={`w-5 h-5 ${isExportingPdf ? "animate-bounce" : ""}`} />
-                        <span>{isExportingPdf ? "Exporting PDF..." : "Download Official Brief (PDF)"}</span>
-                      </button>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowReportModal(true)}
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white text-xs font-bold font-body flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Generate Analysis Report</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        triggerToast("Exported SHA-256 cryptographic audit manifest (JSON-LD).");
+                      }}
+                      className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Export Audit Dossier</span>
+                    </button>
                   </div>
                 </div>
 
-                {/* Section Selector + Live PDF Document Preview Pane */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {/* Left (7 Cols): Modular Section Checkboxes & Controls */}
-                  <div className="lg:col-span-7 space-y-6">
-                    <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-md p-6">
-                      <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9] mb-4">
-                        <div>
-                          <h3 className="heading-section text-sm text-[#0B2545] flex items-center gap-2">
-                            <FileCheck className="w-5 h-5 text-[#1E5FBF]" />
-                            <span>Modular Dossier Section Selector</span>
-                          </h3>
-                          <p className="text-xs text-slate-500 mt-0.5">Toggle which evidence sections to compile into the exported PDF briefing.</p>
+                {/* Audit Standards Telemetry Row */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
+                  <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                    <span className="text-slate-400 text-[10px] block">Merkle Root Digest</span>
+                    <strong className="text-[#0B2545] text-xs font-mono block truncate" title="0x7e29a8f4c189b207df83c9201948ba02384f981029348bca1209384fac903c">
+                      0x7e29a8f4c189b207...ac903c
+                    </strong>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                    <span className="text-slate-400 text-[10px] block">Certifying Authority</span>
+                    <strong className="text-[#1E5FBF] text-xs block">INCOIS &amp; C-DAC Timestamp Server</strong>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                    <span className="text-slate-400 text-[10px] block">Statutory Compliance</span>
+                    <strong className="text-emerald-700 text-xs block">MARPOL 73/78 • MSA 1958 §356</strong>
+                  </div>
+                </div>
+
+                {/* 6 Tamper-Proof Cryptographic Evidence Cards */}
+                <div className="space-y-3">
+                  {EVIDENCE_CHAIN_RECORDS.map((ev) => (
+                    <div
+                      key={ev.id}
+                      className="p-4 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] hover:border-sky-300 transition-all shadow-xs flex items-center justify-between flex-wrap gap-3 group"
+                    >
+                      <div className="space-y-1 max-w-2xl">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-[#1E5FBF] text-xs bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
+                            {ev.id}
+                          </span>
+                          <span className="font-bold text-xs text-[#0B2545] font-display">
+                            {ev.sensor}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">({ev.sensorType})</span>
+                          <span className="text-[10px] font-mono px-2 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-200 flex items-center gap-1">
+                            <Check className="w-2.5 h-2.5" />
+                            {ev.status} ({ev.confidence}%)
+                          </span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => selectAllSections(true)}
-                            className="text-[11px] text-[#1E5FBF] hover:underline font-semibold cursor-pointer"
-                          >
-                            Select All
-                          </button>
-                          <span className="text-slate-300">|</span>
-                          <button
-                            onClick={() => selectAllSections(false)}
-                            className="text-[11px] text-slate-500 hover:underline font-semibold cursor-pointer"
-                          >
-                            Clear
-                          </button>
-                        </div>
+                        <p className="text-xs text-slate-700 font-body">
+                          <strong className="font-semibold text-[#0B2545]">Observation:</strong> {ev.observation}
+                        </p>
+                        <p className="text-[11px] text-slate-500 font-body">
+                          <span className="font-semibold text-slate-700">Model:</span> {ev.processingModel} &bull; <span className="font-semibold text-slate-700">Result:</span> {ev.result}
+                        </p>
                       </div>
 
-                      {/* 9 Interactive Checkboxes */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                        {[
-                          { key: "sec1", num: "01", title: "Executive Summary & Classification", desc: "Incident metadata, statutory authority & classification" },
-                          { key: "sec2", num: "02", title: "Satellite SAR Observation", desc: "Sentinel-1 VV/VH radar segmentation & mask geometry" },
-                          { key: "sec3", num: "03", title: "Lagrangian Trajectory Hindcast", desc: "OpenDrift backward dispersion & origin cone" },
-                          { key: "sec4", num: "04", title: "AIS Kinematic Blackout Analysis", desc: "Speed drop correlation & transponder gap logs" },
-                          { key: "sec5", num: "05", title: "Forensic Attribution Matrix", desc: "7-dimension statistical candidate ranking & radar" },
-                          { key: "sec6", num: "06", title: "Response Strategy What-If", desc: "Containment efficiency & coastline risk projection" },
-                          { key: "sec7", num: "07", title: "Ecological Vulnerability Index", desc: "Alibaug turtle nesting & mangrove impact zones" },
-                          { key: "sec8", num: "08", title: "Historical Incident Benchmarking", desc: "Track record comparative analysis & precedents" },
-                          { key: "sec9", num: "09", title: "Chain of Custody & Sign-Off", desc: "SHA-256 cryptographic seal & boarding warrant" },
-                        ].map((sec) => {
-                          const isChecked = reportSections[sec.key as keyof typeof reportSections];
-                          return (
-                            <div
-                              key={sec.key}
-                              onClick={() => toggleSection(sec.key as keyof typeof reportSections)}
-                              className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-2.5 ${
-                                isChecked
-                                  ? "bg-[#EFF6FD] border-[#1E5FBF]/50 shadow-2xs"
-                                  : "bg-[#F8FBFE] border-[#E1EEF9] opacity-60"
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => {}}
-                                className="mt-0.5 rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
-                              />
-                              <div>
-                                <div className="font-semibold text-slate-800 text-xs font-body flex items-center gap-1.5">
-                                  <span className="font-mono text-[10px] text-[#1E5FBF] font-bold">PAGE {sec.num}</span>
-                                  <span>{sec.title}</span>
-                                </div>
-                                <div className="text-[11px] text-slate-500 mt-0.5 font-body leading-tight">{sec.desc}</div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      <div className="mt-5 pt-4 border-t border-[#E1EEF9] flex flex-col sm:flex-row items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 text-xs text-slate-600 font-body">
-                          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                          <span>Admissible in Maritime Admiralty Court under Indian Evidence Act 65B</span>
+                      <div className="flex flex-col items-end gap-1.5">
+                        <div className="text-right text-[10px] font-mono text-slate-500">
+                          <div>Acquired: <strong className="text-slate-700">{ev.time}</strong></div>
+                          <div className="text-emerald-700 font-bold">SHA-256: {ev.hash}</div>
                         </div>
                         <button
-                          onClick={handleDownloadCustomPdf}
-                          disabled={isExportingPdf}
-                          className="px-4 py-2 rounded-xl bg-[#0B2545] hover:bg-[#123A66] text-white btn-text flex items-center gap-2 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                          onClick={() => setInspectedEvidence(ev)}
+                          className="px-2.5 py-1 rounded-lg bg-white hover:bg-[#E1EEF9] border border-[#E1EEF9] text-xs font-semibold text-[#1E5FBF] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
                         >
-                          <Download className="w-3.5 h-3.5 text-sky-400" />
-                          <span>Export Compiled Brief (PDF)</span>
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Inspect Raw Payload</span>
                         </button>
                       </div>
                     </div>
-
-                    {/* Pre-Compiled Case Metadata Card */}
-                    <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-md p-5">
-                      <h4 className="font-display font-semibold text-xs text-[#0B2545] uppercase tracking-[0.06em] mb-3">
-                        Active Case Briefing Parameters (IN-MH-2026)
-                      </h4>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
-                        <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                          <div className="micro-text text-slate-400 font-body">Incident Code</div>
-                          <div className="data-mono font-bold text-[#0B2545] mt-0.5 font-mono">IN-MH-2026</div>
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                          <div className="micro-text text-slate-400 font-body">Attributed Suspect</div>
-                          <div
-                            className="data-mono font-bold mt-0.5 font-mono"
-                            style={{ color: VESSEL_COLORS[selectedCandidate.id]?.primary || "#E11D48" }}
-                          >
-                            {selectedCandidate.name}
-                          </div>
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                          <div className="micro-text text-slate-400 font-body">Attribution Certainty</div>
-                          <div
-                            className="data-mono font-bold mt-0.5 font-mono"
-                            style={{ color: VESSEL_COLORS[selectedCandidate.id]?.primary || "#E11D48" }}
-                          >
-                            {selectedCandidate.score}%
-                          </div>
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                          <div className="micro-text text-slate-400 font-body">Slick Area &amp; Vol</div>
-                          <div className="data-mono font-bold text-slate-700 mt-0.5 font-mono">276 km² / ~1,200 t</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right (5 Cols): Live PDF Document Preview Pane */}
-                  <div className="lg:col-span-5 space-y-4">
-                    <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-md p-4">
-                      <div className="flex items-center justify-between pb-2 border-b border-slate-200 mb-3">
-                        <span className="font-display font-semibold text-xs text-[#0B2545] uppercase tracking-[0.06em] flex items-center gap-1.5">
-                          <Eye className="w-3.5 h-3.5 text-[#1E5FBF]" />
-                          <span>Live PDF Report Preview Pane</span>
-                        </span>
-                        <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                          {Object.values(reportSections).filter(Boolean).length} of 9 Pages Active
-                        </span>
-                      </div>
-
-                      {/* Mockup PDF Sheet Canvas */}
-                      <div className="bg-white border-2 border-slate-300 rounded-xl shadow-lg p-5 aspect-[8.5/11] relative overflow-hidden flex flex-col justify-between select-none">
-                        {/* Official Header */}
-                        <div>
-                          <div className="flex items-start justify-between border-b-2 border-[#0B2545] pb-3">
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-10 h-10 rounded-lg bg-[#0B2545] flex items-center justify-center text-white font-bold text-lg">
-                                ICG
-                              </div>
-                              <div>
-                                <div className="text-[9px] font-bold text-[#0B2545] uppercase tracking-wider">
-                                  INDIAN COAST GUARD &bull; MINISTRY OF DEFENCE
-                                </div>
-                                <div className="text-xs font-bold text-[#0B2545]">
-                                  FORENSIC EVIDENCE DOSSIER
-                                </div>
-                                <div className="text-[8px] text-slate-500 font-mono">
-                                  REF: ICG/MRCC/IN-MH-2026/BRIEF &bull; MARPOL ANNEX I
-                                </div>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-300">
-                                COURT ADMISSIBLE
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Subject Details */}
-                          <div className="mt-3 p-2 bg-[#F8FBFE] rounded-lg border border-slate-200 text-[9px] font-mono space-y-1">
-                            <div className="flex justify-between">
-                              <span className="text-slate-500">TARGET VESSEL:</span>
-                              <span
-                                className="font-bold"
-                                style={{ color: VESSEL_COLORS[selectedCandidate.id]?.primary || "#E11D48" }}
-                              >
-                                {selectedCandidate.name} (IMO: {selectedCandidate.imo})
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-500">OVERALL ATTRIBUTION:</span>
-                              <span className="font-bold text-rose-600">{selectedCandidate.score}% CERTAINTY</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-500">INCIDENT SECTOR:</span>
-                              <span className="text-slate-700">Mumbai High EEZ (18.78°N, 72.51°E)</span>
-                            </div>
-                          </div>
-
-                          {/* Mini Evidence Summary Box */}
-                          <div className="mt-3 space-y-1.5 text-[8.5px] text-slate-600 leading-normal">
-                            <div className="font-bold text-slate-800 uppercase text-[9px] border-b border-slate-200 pb-0.5">
-                              Forensic Synthesis Summary
-                            </div>
-                            <p>
-                              Kinematic cross-correlation confirmed <strong>{selectedCandidate.aisGap}</strong> transponder blackout coinciding with reverse hydrodynamic hindcast convergence.
-                            </p>
-                            <div className="p-1.5 bg-slate-50 rounded border border-slate-200 text-[8px] font-mono space-y-0.5">
-                              <div>&bull; SAR Spill Area: 276.04 km² (Copernicus Sentinel-1A)</div>
-                              <div>&bull; Lagrangian Particle IoU: {liveCorrelation.match}%</div>
-                              <div>&bull; Hydrodynamic Wind: ECMWF 10m 14.2 kts WSW</div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Official Sign-Off Footer */}
-                        <div className="pt-3 border-t-2 border-slate-200">
-                          <div className="flex items-center justify-between text-[8px] font-mono text-slate-500">
-                            <div>
-                              <div>DIGITAL SEAL: <strong className="text-emerald-700">SHA-256 VERIFIED</strong></div>
-                              <div>COMMAND: MRCC MUMBAI WESTERN REGION</div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-bold text-slate-700">FLAG OFFICER COMMANDING</div>
-                              <div>INDIAN COAST GUARD</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={handleDownloadCustomPdf}
-                        disabled={isExportingPdf}
-                        className="w-full mt-3 py-2.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white btn-text flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs disabled:opacity-50"
-                      >
-                        <Download className="w-4 h-4" />
-                        <span>{isExportingPdf ? "Generating PDF..." : "Export Full Dossier (PDF)"}</span>
-                      </button>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </main>
       </div>
 
       {/* ===================================================================== */}
-      {/* MODAL: LOOK-ALIKE SAR REJECTION ARTIFACT INSPECTOR                    */}
+      {/* 2.5 RAW TELEMETRY PAYLOAD INSPECTOR MODAL                             */}
       {/* ===================================================================== */}
-      {selectedArtifactModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden flex flex-col">
-            {/* Modal Header */}
-            <div className="p-5 bg-gradient-to-r from-[#0B2545] to-[#1E5FBF] text-white flex items-center justify-between">
+      {inspectedEvidence && (
+        <div className="fixed inset-0 bg-[#0B2545]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl border border-[#E1EEF9] shadow-2xl max-w-2xl w-full overflow-hidden p-6 space-y-4 animate-scaleUp">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
               <div className="flex items-center gap-2.5">
-                <Brain className="w-5 h-5 text-sky-300" />
+                <div className="w-8 h-8 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#1E5FBF]">
+                  <FileCode className="w-4 h-4" />
+                </div>
                 <div>
-                  <h3 className="font-display font-bold text-base">{selectedArtifactModal.title}</h3>
-                  <div className="text-[11px] text-sky-200 font-mono">
-                    Category: {selectedArtifactModal.category} &bull; Filtered SAR Scene
-                  </div>
+                  <h3 className="text-sm font-bold text-[#0B2545] font-display">
+                    Raw Telemetry Payload &mdash; {inspectedEvidence.id}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-mono">
+                    {inspectedEvidence.sensor} &bull; {inspectedEvidence.time}
+                  </p>
                 </div>
               </div>
               <button
-                onClick={() => setSelectedArtifactModal(null)}
-                className="p-1.5 rounded-xl text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                onClick={() => setInspectedEvidence(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 space-y-5 overflow-y-auto max-h-[80vh]">
-              {/* Synthetic Radar Patch Display */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
-                <div className="sm:col-span-6 bg-[#0B1D35] rounded-2xl overflow-hidden border border-slate-700 relative aspect-square flex flex-col justify-between p-3 shadow-inner">
-                  {/* Radar grid lines */}
-                  <svg className="absolute inset-0 w-full h-full opacity-30 pointer-events-none">
-                    <circle cx="50%" cy="50%" r="30%" fill="none" stroke="#38BDF8" strokeWidth="1" strokeDasharray="3 3" />
-                    <circle cx="50%" cy="50%" r="60%" fill="none" stroke="#38BDF8" strokeWidth="1" strokeDasharray="3 3" />
-                    <line x1="0" y1="50%" x2="100%" y2="50%" stroke="#38BDF8" strokeWidth="0.8" />
-                    <line x1="50%" y1="0" x2="50%" y2="100%" stroke="#38BDF8" strokeWidth="0.8" />
-                  </svg>
-
-                  {/* False Color Patch */}
-                  <div className="absolute inset-4 rounded-xl bg-gradient-to-br from-slate-900 via-blue-950 to-slate-800 flex items-center justify-center border border-sky-400/30">
-                    <div className="text-center p-3">
-                      <div className="text-[11px] font-mono text-amber-300 font-bold mb-1">
-                        SAR BACKSCATTER NULL
-                      </div>
-                      <div className="text-[9px] text-slate-300 font-mono">
-                        σ₀ = -24.8 dB (VV) &bull; -31.2 dB (VH)
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="relative z-10 flex justify-between text-[9px] font-mono text-sky-300">
-                    <span>POL: DUAL VV+VH</span>
-                    <span>RES: 10m / PIXEL</span>
-                  </div>
-                  <div className="relative z-10 text-center text-[9px] font-mono text-emerald-400 font-bold">
-                    REJECTION VERIFIED: {selectedArtifactModal.confidence}%
-                  </div>
-                </div>
-
-                {/* Spectral Metrics List */}
-                <div className="sm:col-span-6 space-y-2.5 flex flex-col justify-between text-xs">
-                  <div className="space-y-2">
-                    <div className="font-semibold text-[#0B2545] font-body text-xs uppercase tracking-wide">
-                      Multi-Spectral Rejection Metrics:
-                    </div>
-                    {Object.entries(selectedArtifactModal.sarAnalysis).map(([k, v], i) => (
-                      <div key={i} className="p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                        <span className="data-mono font-mono text-slate-700 font-semibold text-[11px]">{v}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-[11px] font-semibold flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>Automated False Alarm Filter Executed</span>
-                  </div>
-                </div>
+            <div className="space-y-2 text-xs font-mono">
+              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                <span className="text-slate-500">Cryptographic Digest (SHA-256):</span>
+                <span className="text-emerald-700 font-bold truncate max-w-md" title={inspectedEvidence.fullHash}>
+                  {inspectedEvidence.fullHash}
+                </span>
               </div>
 
-              {/* Technical Description */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700 leading-relaxed font-body">
-                <div className="font-bold text-[#0B2545] mb-1">Neural Decision Rule &amp; Physical Justification:</div>
-                <p>{selectedArtifactModal.explanation}</p>
+              {/* Raw JSON Code Canvas */}
+              <div className="relative rounded-2xl bg-[#0B1E36] p-4 text-sky-200 border border-slate-700 overflow-x-auto max-h-72">
+                <pre className="text-[11px] font-mono leading-relaxed">
+                  {JSON.stringify(
+                    {
+                      evidence_id: inspectedEvidence.id,
+                      sensor_source: inspectedEvidence.sensor,
+                      sensor_type: inspectedEvidence.sensorType,
+                      timestamp_utc: inspectedEvidence.time,
+                      observation_metric: inspectedEvidence.observation,
+                      processing_kernel: inspectedEvidence.processingModel,
+                      analytical_result: inspectedEvidence.result,
+                      sha256_digest: inspectedEvidence.fullHash,
+                      verification_status: inspectedEvidence.status,
+                      confidence_index: inspectedEvidence.confidence,
+                      raw_telemetry_payload: inspectedEvidence.rawPayload,
+                    },
+                    null,
+                    2
+                  )}
+                </pre>
               </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
-              <button
-                onClick={() => setSelectedArtifactModal(null)}
-                className="px-5 py-2 rounded-xl bg-[#0B2545] hover:bg-[#123A66] text-white text-xs font-semibold cursor-pointer"
-              >
-                Close Inspector
-              </button>
+            <div className="flex justify-between items-center pt-2 border-t border-slate-100">
+              <span className="text-[11px] font-mono text-slate-400">
+                Verified under ISO/IEC 27037 Digital Evidence Standards
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard?.writeText(JSON.stringify(inspectedEvidence, null, 2));
+                    triggerToast(`Copied payload for ${inspectedEvidence.id} to clipboard`);
+                  }}
+                  className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
+                >
+                  Copy JSON
+                </button>
+                <button
+                  onClick={() => setInspectedEvidence(null)}
+                  className="px-4 py-1.5 rounded-xl bg-[#0B2545] hover:bg-[#143966] text-white text-xs font-bold font-body transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Official Forensic Analysis PDF Report Modal */}
+      {/* ===================================================================== */}
+      {/* 3. REPORT GENERATION MODAL (STAGE: ANALYSIS)                          */}
+      {/* ===================================================================== */}
       <ReportGenerationModal
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
-        incidentTitle="Mumbai High Offshore Slick IN-MH-2026"
+        stage={reportStage}
+        incidentIdOrCode="IN-MH-2026"
+        incidentTitle={
+          reportStage === "environmental"
+            ? "Mumbai High Offshore Marine Habitat & Ecological Impact Assessment"
+            : reportStage === "economic"
+            ? "Mumbai High Offshore Economic Loss & Clean-Up Cost Assessment"
+            : "Mumbai High Offshore Forensic Spill Analysis"
+        }
+        currentData={{
+          incidentId: "IN-MH-2026",
+          incidentTitle: "Mumbai High Offshore Forensic Spill Analysis",
+          overview: {
+            summary: `Automated SAR backscatter and reverse Lagrangian analysis established a total confirmed slick area of 14.2 km² with primary attribution index of ${lagrangianOutput.computedAttribution.toFixed(1)}% assigned to suspect vessel ${selectedCandidate.name}.`,
+            slickAreaKm2: 14.2,
+            estimatedVolumeM3: 48000,
+            confidenceScore: Number(modelConfidenceBreakdown.overallConfidence),
+            coordinates: [18.69, 72.38],
+          },
+          environmental: {
+            windSpeedMs: 5.1,
+            windDirectionDeg: 289,
+            currentSpeedMs: 0.67,
+          },
+          simulation: {
+            simWindSpeed: whatIfWindSpeed,
+            simWindDir: whatIfWindDir,
+            simCurrentSpeed: whatIfCurrentSpeed,
+            netDriftKts: whatIfScenarioOutput.netSpeedKts,
+            netHeadingDeg: whatIfScenarioOutput.netHeadingDeg,
+            projectedArea24h: whatIfScenarioOutput.projectedArea24h,
+            landfallEtaHours: whatIfScenarioOutput.landfallEtaHours,
+            targetSector: whatIfScenarioOutput.targetSector,
+          },
+          vessels: candidates.map((c, i) => ({
+            rank: i + 1,
+            name: c.name,
+            mmsi: (c as any).mmsi || "636019842",
+            imo: c.imo || "9314567",
+            flag: c.flag,
+            type: c.type,
+            cpaKm: c.id === selectedCandidate.id ? lagrangianOutput.calculatedCpaKm : c.cpa,
+            minSogKts: c.minSog,
+            darkGapMin: c.aisGap,
+            liabilityScore: c.id === selectedCandidate.id ? lagrangianOutput.computedAttribution : c.score,
+          })),
+        }}
       />
+      {/* ===================================================================== */}
+      {/* 4. SPILL DNA — GEOMETRY & FINGERPRINT MODAL (Matching Screenshot 3)   */}
+      {/* ===================================================================== */}
+      {spillDNAModalOpen && (
+        <div className="fixed inset-0 bg-[#0B2545]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl border border-[#E1EEF9] shadow-2xl max-w-2xl w-full overflow-hidden p-6 space-y-5 animate-scaleUp">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-[#E1EEF9]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                  <Globe className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-bold text-[#0B2545] font-display uppercase tracking-wider">
+                  SPILL DNA &mdash; GEOMETRY &amp; FINGERPRINT
+                </h3>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowReportModal(true)}
+                  className="text-xs font-semibold text-[#1E5FBF] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <span>View Details &rarr;</span>
+                </button>
+                <button
+                  onClick={() => setSpillDNAModalOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Top 6 Metric Boxes (Matching Screenshot 3) */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="p-3 rounded-2xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                <span className="text-[11px] text-slate-400 font-sans block">Area</span>
+                <span className="text-base font-extrabold text-[#0B2545] font-display">276.04 km²</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                <span className="text-[11px] text-slate-400 font-sans block">Perimeter</span>
+                <span className="text-base font-extrabold text-[#0B2545] font-display">312.5 km</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                <span className="text-[11px] text-slate-400 font-sans block">Length (major)</span>
+                <span className="text-base font-extrabold text-[#0B2545] font-display">31.2 km</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                <span className="text-[11px] text-slate-400 font-sans block">Width (minor)</span>
+                <span className="text-base font-extrabold text-[#0B2545] font-display">12.8 km</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                <span className="text-[11px] text-slate-400 font-sans block">Orientation</span>
+                <span className="text-base font-extrabold text-[#0B2545] font-display">24.6° (NE-SW)</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                <span className="text-[11px] text-slate-400 font-sans block">Shape Index</span>
+                <span className="text-base font-extrabold text-[#0B2545] font-display">0.73 (elongated)</span>
+              </div>
+            </div>
+
+            {/* Dark Marine Canvas Visualization (Matching Screenshot 3) */}
+            <div className="relative h-48 w-full rounded-2xl bg-[#09182A] border border-slate-800 overflow-hidden flex items-center justify-center">
+              {/* Radial Multi-Tier Gradient Slick Simulation */}
+              <div className="relative flex items-center justify-center">
+                {/* Sheen Outer Ring */}
+                <div
+                  className="w-72 h-28 rounded-full blur-[6px] opacity-40 transition-all duration-500"
+                  style={{
+                    background: "radial-gradient(ellipse at center, rgba(239,68,68,0.9) 0%, rgba(245,158,11,0.6) 45%, rgba(56,189,248,0.2) 75%, transparent 100%)",
+                    transform: "rotate(-24.6deg)",
+                  }}
+                />
+                {/* Core Dense Oil Layer */}
+                <div
+                  className="absolute w-56 h-20 rounded-full shadow-[0_0_30px_rgba(245,158,11,0.4)] transition-all duration-500"
+                  style={{
+                    background: "linear-gradient(135deg, #EF4444 0%, #F97316 50%, #FBBF24 100%)",
+                    transform: "rotate(-24.6deg)",
+                  }}
+                />
+                {/* 3D Highlighting overlay */}
+                {spillDNAViewMode === "3D" && (
+                  <div
+                    className="absolute w-52 h-16 rounded-full border border-white/30 blur-[1px]"
+                    style={{ transform: "rotate(-24.6deg)" }}
+                  />
+                )}
+                {spillDNAViewMode === "Cross-section" && (
+                  <div className="absolute inset-x-0 h-0.5 bg-sky-400/80 border-b border-dashed border-white shadow-md" />
+                )}
+                {spillDNAViewMode === "Thickness" && (
+                  <div className="absolute text-[10px] font-mono font-bold text-white bg-black/60 px-2 py-0.5 rounded">
+                    Core: 240 µm &bull; Sheen: 0.15 µm
+                  </div>
+                )}
+                {spillDNAViewMode === "Spectral" && (
+                  <div className="absolute inset-0 bg-gradient-to-r from-purple-500/20 via-sky-500/20 to-emerald-500/20 mix-blend-overlay" />
+                )}
+              </div>
+            </div>
+
+            {/* 4 Bottom View Mode Tabs (Matching Screenshot 3) */}
+            <div className="grid grid-cols-4 gap-2 text-xs font-mono font-bold">
+              {(["3D", "Cross-section", "Thickness", "Spectral"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setSpillDNAViewMode(mode)}
+                  className={`py-2 rounded-xl border transition-all cursor-pointer ${
+                    spillDNAViewMode === mode
+                      ? "bg-[#0B2545] text-white border-[#0B2545] shadow-xs"
+                      : "bg-[#F8FBFE] text-slate-600 hover:bg-[#E1EEF9] border-[#E1EEF9]"
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

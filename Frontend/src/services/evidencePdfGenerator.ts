@@ -160,12 +160,12 @@ export async function generateClientEvidenceBriefPdf(options: EvidencePdfOptions
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   doc.setTextColor(navy[0], navy[1], navy[2]);
-  doc.text("GOVERNMENT OF INDIA — MINISTRY OF DEFENCE", pageWidth / 2, 85, { align: "center" });
+  doc.text("MARITIME DOMAIN AWARENESS & ENVIRONMENTAL SECURITY", pageWidth / 2, 85, { align: "center" });
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
-  doc.text("INDIAN COAST GUARD · MARITIME DEFENCE HEADQUARTERS", pageWidth / 2, 100, { align: "center" });
+  doc.text("INDIAN COAST GUARD · MARITIME OPERATIONS COMMAND", pageWidth / 2, 100, { align: "center" });
 
   doc.setDrawColor(primaryBlue[0], primaryBlue[1], primaryBlue[2]);
   doc.setLineWidth(1.5);
@@ -263,15 +263,16 @@ export async function generateClientEvidenceBriefPdf(options: EvidencePdfOptions
 
   const narrativeY = 88 + splitNarrative.length * 10.5;
 
-  // Attribution Box Callout
+  // Attribution Box Callout - Expanded height and clean column spacing to eliminate text overlap
+  const boxHeight = 66;
   const boxBg = isCritical ? [254, 242, 242] : isElevated ? [255, 251, 235] : [240, 253, 244];
   const boxBorder = isCritical ? [254, 202, 202] : isElevated ? [253, 230, 138] : [134, 239, 172];
   doc.setFillColor(boxBg[0], boxBg[1], boxBg[2]);
   doc.setDrawColor(boxBorder[0], boxBorder[1], boxBorder[2]);
   doc.setLineWidth(0.75);
-  doc.rect(leftMargin, narrativeY + 6, contentWidth, 54, "FD");
+  doc.rect(leftMargin, narrativeY + 6, contentWidth, boxHeight, "FD");
 
-  // Left callout
+  // Left callout: Title, Big Score, Confidence Label, Verdict Sub-Label
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.5);
   doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
@@ -280,52 +281,55 @@ export async function generateClientEvidenceBriefPdf(options: EvidencePdfOptions
   doc.setFont("helvetica", "bold");
   doc.setFontSize(18);
   doc.setTextColor(scoreColor[0], scoreColor[1], scoreColor[2]);
-  doc.text(`${overallScore.toFixed(1)}%`, leftMargin + 12, narrativeY + 38);
+  const scoreStr = `${overallScore.toFixed(1)}%`;
+  doc.text(scoreStr, leftMargin + 12, narrativeY + 40);
 
+  // Measure score text width to position "Confidence Score" without any overlapping
+  const scoreWidth = doc.getTextWidth(scoreStr);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
-  doc.text("Confidence Score", leftMargin + 66, narrativeY + 37);
+  doc.text("Confidence Score", leftMargin + 12 + scoreWidth + 8, narrativeY + 39);
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.0);
-  doc.setTextColor(scoreColor[0], scoreColor[1], scoreColor[2]);
-  doc.text(verdictText, leftMargin + 12, narrativeY + 50);
-
-  // Right callout
-  const rightColX = leftMargin + 250;
-  doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
+  doc.setTextColor(scoreColor[0], scoreColor[1], scoreColor[2]);
+  doc.text(verdictText, leftMargin + 12, narrativeY + 56);
+
+  // Right callout: Key metrics with aligned labels
+  const rightColX = leftMargin + 250;
+  const valueOffset = 76;
+  doc.setFontSize(7.5);
+
+  doc.setFont("helvetica", "bold");
   doc.setTextColor(textDark[0], textDark[1], textDark[2]);
+  doc.text("Hindcast Match:", rightColX, narrativeY + 20);
+  doc.setFont("helvetica", "normal");
+  doc.text(hindcastMatch, rightColX + valueOffset, narrativeY + 20);
 
   doc.setFont("helvetica", "bold");
-  doc.text("Hindcast Match:", rightColX, narrativeY + 18);
+  doc.text("Anomaly Level:", rightColX, narrativeY + 31);
   doc.setFont("helvetica", "normal");
-  doc.text(hindcastMatch, rightColX + 66, narrativeY + 18);
+  doc.text(anomalyLevel, rightColX + valueOffset, narrativeY + 31);
 
   doc.setFont("helvetica", "bold");
-  doc.text("Anomaly Level:", rightColX, narrativeY + 29);
+  doc.text("Dark Duration:", rightColX, narrativeY + 42);
   doc.setFont("helvetica", "normal");
-  doc.text(anomalyLevel, rightColX + 66, narrativeY + 29);
+  doc.text(darkDuration, rightColX + valueOffset, narrativeY + 42);
 
   doc.setFont("helvetica", "bold");
-  doc.text("Dark Duration:", rightColX, narrativeY + 40);
+  doc.text("Investigation Status:", rightColX, narrativeY + 53);
   doc.setFont("helvetica", "normal");
-  doc.text(darkDuration, rightColX + 66, narrativeY + 40);
-
-  doc.setFont("helvetica", "bold");
-  doc.text("Investigation Status:", rightColX, narrativeY + 51);
-  doc.setFont("helvetica", "normal");
-  doc.text("ANALYSIS", rightColX + 86, narrativeY + 51);
+  doc.text("ANALYSIS", rightColX + valueOffset + 20, narrativeY + 53);
 
   // Key incident metrics table
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(primaryBlue[0], primaryBlue[1], primaryBlue[2]);
-  doc.text("Key Incident Investigation Metrics", leftMargin, narrativeY + 76);
+  doc.text("Key Incident Investigation Metrics", leftMargin, narrativeY + boxHeight + 22);
 
   autoTable(doc, {
-    startY: narrativeY + 82,
+    startY: narrativeY + boxHeight + 28,
     margin: { left: leftMargin, right: pageWidth - rightMargin },
     head: [],
     body: [
@@ -1338,7 +1342,7 @@ To execute this test: Open the Sahayya Attribution Console and select 'Run Count
   doc.setTextColor(textDark[0], textDark[1], textDark[2]);
   doc.text("REPORTING AUTHORITY: Commanding Officer", leftMargin, p10FinalY2 + 70);
   doc.text("Indian Coast Guard MRCC · Indian Coast Guard Maritime Rescue Coordination Centre", leftMargin, p10FinalY2 + 80);
-  doc.text("Directorate of Maritime Safety & Environment Protection, Ministry of Defence, New Delhi", leftMargin, p10FinalY2 + 90);
+  doc.text("Directorate of Maritime Safety & Environment Protection, New Delhi", leftMargin, p10FinalY2 + 90);
 
   drawPageDecorations(10);
 

@@ -285,24 +285,53 @@ export const VesselsMap: React.FC<VesselsMapProps> = ({
         <MapContainer
           center={currentCenter}
           zoom={currentZoom}
+          minZoom={4}
+          maxZoom={18}
           zoomControl={false}
           attributionControl={false}
+          preferCanvas={true}
+          zoomAnimation={true}
+          zoomAnimationThreshold={8}
+          fadeAnimation={true}
+          markerZoomAnimation={true}
+          inertia={true}
+          inertiaDeceleration={3400}
+          inertiaMaxSpeed={1500}
+          wheelDebounceTime={60}
+          wheelPxPerZoomLevel={120}
+          easeLinearity={0.2}
+          zoomSnap={0.5}
+          zoomDelta={0.5}
           ref={mapRef}
           className="w-full h-full"
         >
           <MapResizer center={currentCenter} zoom={currentZoom} />
           <MapController center={currentCenter} zoom={currentZoom} />
 
-          {/* Base Tiles */}
+          {/* Base Tiles with Buffer */}
           {tileMode === "satellite" ? (
             <TileLayer
               url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
               maxZoom={18}
+              maxNativeZoom={18}
+              tileSize={256}
+              updateWhenZooming={false}
+              updateWhenIdle={false}
+              updateInterval={100}
+              keepBuffer={12}
+              crossOrigin="anonymous"
             />
           ) : (
             <TileLayer
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               maxZoom={19}
+              maxNativeZoom={19}
+              tileSize={256}
+              updateWhenZooming={false}
+              updateWhenIdle={false}
+              updateInterval={100}
+              keepBuffer={12}
+              crossOrigin="anonymous"
             />
           )}
 

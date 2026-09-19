@@ -29,6 +29,7 @@ import {
 import { ACTIVE_INCIDENTS, ActiveIncidentRecord } from "../data/incidentData";
 import { VESSELS_DATA, VesselRecord } from "../data/vesselsData";
 import { clampToNavigableSea } from "../utils/geoBoundary";
+import { simulateOilSpillHydrodynamics } from "../utils/spillHydrodynamics";
 
 // Fix Leaflet icon URLs
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -41,50 +42,83 @@ L.Icon.Default.mergeOptions({
     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
-// Map controller for flyTo and resize invalidation
+// Map controller for smooth flyTo and debounced resize invalidation
 const MapController: React.FC<{
   centerTarget: [number, number] | null;
   zoomTarget?: number;
 }> = ({ centerTarget, zoomTarget }) => {
   const map = useMap();
+  const lastTargetRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const handleResize = () => {
-      map.invalidateSize();
+    let rAFId: number | null = null;
+    let lastWidth = 0;
+    let lastHeight = 0;
+
+    const handleDebouncedResize = () => {
+      if (rAFId) cancelAnimationFrame(rAFId);
+      rAFId = requestAnimationFrame(() => {
+        const container = map.getContainer();
+        if (container) {
+          const { clientWidth, clientHeight } = container;
+          if (Math.abs(clientWidth - lastWidth) > 3 || Math.abs(clientHeight - lastHeight) > 3) {
+            lastWidth = clientWidth;
+            lastHeight = clientHeight;
+            if (!(map as any)._animatingZoom && !(map as any)._moving) {
+              map.invalidateSize({ debounceMoveend: true });
+            }
+          }
+        }
+      });
     };
 
-    const ro = new ResizeObserver(() => {
-      map.invalidateSize();
-    });
-
+    const ro = new ResizeObserver(handleDebouncedResize);
     const container = map.getContainer();
     if (container) {
+      lastWidth = container.clientWidth;
+      lastHeight = container.clientHeight;
       ro.observe(container);
     }
-    window.addEventListener("resize", handleResize);
-
-    const timer = setTimeout(() => {
-      map.invalidateSize();
-    }, 250);
+    window.addEventListener("resize", handleDebouncedResize);
 
     return () => {
+      if (rAFId) cancelAnimationFrame(rAFId);
       ro.disconnect();
-      window.removeEventListener("resize", handleResize);
-      clearTimeout(timer);
+      window.removeEventListener("resize", handleDebouncedResize);
     };
   }, [map]);
 
   useEffect(() => {
     if (centerTarget) {
-      map.flyTo(centerTarget, zoomTarget || 8, { duration: 1.2 });
+      const targetKey = `${centerTarget[0].toFixed(4)},${centerTarget[1].toFixed(4)},${zoomTarget || 8}`;
+      if (lastTargetRef.current !== targetKey) {
+        lastTargetRef.current = targetKey;
+        map.flyTo(centerTarget, zoomTarget || 8, {
+          duration: 0.9,
+          easeLinearity: 0.25,
+          noMoveStart: true,
+        });
+      }
     }
   }, [centerTarget, zoomTarget, map]);
 
   return null;
 };
 
-// SVG Rotated Vessel Marker Icon
-const createVesselIcon = (type: string, heading: number, isSelected: boolean) => {
+// Memoized DivIcon Caches (Eliminates DOM recreation and thrashing during zoom)
+const vesselIconCache = new Map<string, L.DivIcon>();
+const incidentIconCache = new Map<string, L.DivIcon>();
+const portIconCache = new Map<string, L.DivIcon>();
+
+// SVG Rotated Vessel Marker Icon with Cache
+const getVesselIcon = (type: string, heading: number, isSelected: boolean) => {
+  const roundedHeading = Math.round(heading / 5) * 5;
+  const key = `${type}_${roundedHeading}_${isSelected ? 1 : 0}`;
+  
+  if (vesselIconCache.has(key)) {
+    return vesselIconCache.get(key)!;
+  }
+
   const colorMap: Record<string, string> = {
     Tanker: "#EF4444", // Red
     "Bulk Carrier": "#10B981", // Green
@@ -97,30 +131,38 @@ const createVesselIcon = (type: string, heading: number, isSelected: boolean) =>
   const size = isSelected ? 34 : 26;
 
   const svgHtml = `
-    <div style="transform: rotate(${heading}deg); transform-origin: center center; display: flex; align-items: center; justify-content: center; width: ${size}px; height: ${size}px;">
+    <div style="transform: rotate(${roundedHeading}deg); transform-origin: center center; display: flex; align-items: center; justify-content: center; width: ${size}px; height: ${size}px;">
       ${
         isSelected
           ? `<div style="position: absolute; width: ${size + 12}px; height: ${size + 12}px; border-radius: 50%; border: 2px solid ${fill}; opacity: 0.8; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>`
           : ""
       }
-      <svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">
+      <svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); will-change: transform;">
         <path d="M12 2L19 21L12 17L5 21L12 2Z" fill="${fill}" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
         <circle cx="12" cy="11" r="2" fill="#FFFFFF"/>
       </svg>
     </div>
   `;
 
-  return L.divIcon({
+  const icon = L.divIcon({
     className: "custom-vessel-marker",
     html: svgHtml,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -size / 2],
   });
+
+  vesselIconCache.set(key, icon);
+  return icon;
 };
 
-// SVG Pulsing Incident Marker Icon
-const createIncidentIcon = (severity: string, isSelected: boolean) => {
+// SVG Pulsing Incident Marker Icon with Cache
+const getIncidentIcon = (severity: string, isSelected: boolean) => {
+  const key = `${severity}_${isSelected ? 1 : 0}`;
+  if (incidentIconCache.has(key)) {
+    return incidentIconCache.get(key)!;
+  }
+
   const color =
     severity === "Critical"
       ? "#EF4444"
@@ -146,21 +188,28 @@ const createIncidentIcon = (severity: string, isSelected: boolean) => {
     </div>
   `;
 
-  return L.divIcon({
+  const icon = L.divIcon({
     className: "custom-incident-marker",
     html: svgHtml,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -size / 2],
   });
+
+  incidentIconCache.set(key, icon);
+  return icon;
 };
 
-// Port Icon
-const createPortIcon = (name: string) => {
-  return L.divIcon({
+// Port Icon with Cache
+const getPortIcon = (name: string) => {
+  if (portIconCache.has(name)) {
+    return portIconCache.get(name)!;
+  }
+
+  const icon = L.divIcon({
     className: "custom-port-marker",
     html: `
-      <div style="display: flex; align-items: center; gap: 4px; background: rgba(11, 37, 69, 0.85); color: #FFFFFF; padding: 2px 6px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.4); font-size: 10px; font-weight: 700; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+      <div style="display: flex; align-items: center; gap: 4px; background: rgba(11, 37, 69, 0.88); backdrop-filter: blur(4px); color: #FFFFFF; padding: 2px 7px; border-radius: 12px; border: 1px solid rgba(56, 189, 248, 0.5); font-size: 10px; font-weight: 700; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.4); pointer-events: auto;">
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#38BDF8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="5" r="3"/>
           <line x1="12" y1="22" x2="12" y2="8"/>
@@ -169,9 +218,12 @@ const createPortIcon = (name: string) => {
         <span>${name}</span>
       </div>
     `,
-    iconSize: [80, 20],
-    iconAnchor: [40, 10],
+    iconSize: [84, 22],
+    iconAnchor: [42, 11],
   });
+
+  portIconCache.set(name, icon);
+  return icon;
 };
 
 // Major Indian Ports
@@ -275,25 +327,74 @@ export const NationalMap: React.FC<NationalMapProps> = ({
     }
   };
 
+  // High-performance memoization: prevent recalculating complex hydrodynamics on every frame
+  const incidentSimulations = React.useMemo(() => {
+    return incidents.map((inc) => ({
+      inc,
+      isSel: selectedIncidentId === inc.id,
+      sim: simulateOilSpillHydrodynamics({
+        centroid: inc.coordinates,
+        windSpeedKts: 10.0,
+        windDirDeg: 289,
+        currentSpeedKts: 1.3,
+        currentDirDeg: 189,
+        releaseOffsetHours: -18.0,
+        releaseVolumeM3: (inc.areaKm2 / 276) * 18000,
+        containmentEffPct: 25,
+        chemicalDispersant: true,
+        responseDelayHours: 3.0,
+        turbulentDiffusion: 12.0,
+      }),
+    }));
+  }, [incidents, selectedIncidentId]);
+
+  // High-performance memoization: pre-clamp vessels
+  const processedVessels = React.useMemo(() => {
+    return vessels.map((v) => ({
+      vessel: v,
+      safeCoords: clampToNavigableSea(v.coordinates[0], v.coordinates[1]),
+    }));
+  }, [vessels]);
+
   return (
     <div ref={containerRef} className="relative w-full h-full overflow-hidden bg-slate-900">
       <MapContainer
         center={[16.0, 76.5]}
         zoom={5}
         minZoom={4}
-        maxZoom={14}
+        maxZoom={18}
         className="w-full h-full z-0"
         zoomControl={false}
+        preferCanvas={true}
+        zoomAnimation={true}
+        zoomAnimationThreshold={8}
+        fadeAnimation={true}
+        markerZoomAnimation={true}
+        inertia={true}
+        inertiaDeceleration={3400}
+        inertiaMaxSpeed={1500}
+        wheelDebounceTime={60}
+        wheelPxPerZoomLevel={120}
+        easeLinearity={0.2}
+        zoomSnap={0.5}
+        zoomDelta={0.5}
       >
         <MapController centerTarget={flyToCoords} />
 
-        {/* Base Tile Layer */}
+        {/* Base Tile Layer with Buffer and Non-Churning Zoom Engine */}
         {mapType === "satellite" ? (
           <TileLayer
             key="satellite"
             url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
             attribution="&copy; Esri &mdash; National Geographic, DeLorme, NAVTEQ"
             maxZoom={18}
+            maxNativeZoom={18}
+            tileSize={256}
+            updateWhenZooming={false}
+            updateWhenIdle={false}
+            updateInterval={100}
+            keepBuffer={12}
+            crossOrigin="anonymous"
           />
         ) : (
           <TileLayer
@@ -301,6 +402,13 @@ export const NationalMap: React.FC<NationalMapProps> = ({
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="&copy; OpenStreetMap contributors"
             maxZoom={19}
+            maxNativeZoom={19}
+            tileSize={256}
+            updateWhenZooming={false}
+            updateWhenIdle={false}
+            updateInterval={100}
+            keepBuffer={12}
+            crossOrigin="anonymous"
           />
         )}
 
@@ -354,24 +462,56 @@ export const NationalMap: React.FC<NationalMapProps> = ({
           </>
         )}
 
-        {/* Major Ports */}
+        {/* Major Ports with Cached DivIcons */}
         {layerToggles.ports &&
           INDIAN_MAJOR_PORTS.map((p) => (
             <Marker
               key={p.name}
               position={p.pos}
-              icon={createPortIcon(p.name)}
+              icon={getPortIcon(p.name)}
             />
           ))}
 
-        {/* Active Incident Markers */}
-        {incidents.map((inc) => {
-          const isSel = selectedIncidentId === inc.id;
-          return (
+        {/* Active Incident Multi-Layer Oil Slicks & Markers */}
+        {incidentSimulations.map(({ inc, isSel, sim }) => (
+          <React.Fragment key={inc.id}>
+            {/* Outer Sheen Layer */}
+            <Polygon
+              positions={sim.sheenLayer.coordinates}
+              pathOptions={{
+                color: "#38BDF8",
+                fillColor: "#0284C7",
+                fillOpacity: 0.28,
+                weight: 1.2,
+              }}
+            />
+
+            {/* Moderate Contamination Layer */}
+            <Polygon
+              positions={sim.moderateLayer.coordinates}
+              pathOptions={{
+                color: "#D97706",
+                fillColor: "#B45309",
+                fillOpacity: 0.60,
+                weight: 1.5,
+              }}
+            />
+
+            {/* Heavy Core Layer */}
+            <Polygon
+              positions={sim.coreLayer.coordinates}
+              pathOptions={{
+                color: "#271206",
+                fillColor: "#1C0D02",
+                fillOpacity: 0.88,
+                weight: 2.0,
+              }}
+            />
+
+            {/* Centroid Marker & Tactical Popup */}
             <Marker
-              key={inc.id}
               position={inc.coordinates}
-              icon={createIncidentIcon(inc.severity, isSel)}
+              icon={getIncidentIcon(inc.severity, isSel)}
               eventHandlers={{
                 click: () => onSelectIncident(inc),
               }}
@@ -419,43 +559,41 @@ export const NationalMap: React.FC<NationalMapProps> = ({
                 </div>
               </Popup>
             </Marker>
-          );
-        })}
+          </React.Fragment>
+        ))}
 
-        {/* Fleet Vessels */}
-        {vessels.map((v) => {
-          const safeCoords = clampToNavigableSea(v.coordinates[0], v.coordinates[1]);
-          return (
-            <Marker
-              key={v.id}
-              position={safeCoords}
-              icon={createVesselIcon(v.type, v.heading, false)}
-              eventHandlers={{
-                click: () => onSelectVessel(v),
-              }}
-            >
+        {/* Fleet Vessels with Cached DivIcons */}
+        {processedVessels.map(({ vessel, safeCoords }) => (
+          <Marker
+            key={vessel.id}
+            position={safeCoords}
+            icon={getVesselIcon(vessel.type, vessel.heading, false)}
+            eventHandlers={{
+              click: () => onSelectVessel(vessel),
+            }}
+          >
             <Popup className="custom-tactical-popup">
               <div className="p-3 w-60 text-slate-800">
                 <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 mb-2">
-                  <div className="font-bold text-xs text-[#0B2545]">{v.name}</div>
+                  <div className="font-bold text-xs text-[#0B2545]">{vessel.name}</div>
                   <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
-                    IMO {v.imo}
+                    IMO {vessel.imo}
                   </span>
                 </div>
 
                 <div className="text-[10px] text-slate-500 mb-2">
-                  {v.type} &nbsp;|&nbsp; {v.flag}
+                  {vessel.type} &nbsp;|&nbsp; {vessel.flag}
                 </div>
 
                 <div className="grid grid-cols-2 gap-1 text-[10px] font-mono bg-slate-50 p-2 rounded-lg mb-2">
-                  <div>Speed: <span className="font-bold">{v.speedKnots} kts</span></div>
-                  <div>Heading: <span className="font-bold">{v.heading}°</span></div>
-                  <div>Status: <span className="font-bold text-amber-600">{v.status}</span></div>
-                  <div>ASI Risk: <span className="font-bold text-rose-600">{v.asiScore}%</span></div>
+                  <div>Speed: <span className="font-bold">{vessel.speedKnots} kts</span></div>
+                  <div>Heading: <span className="font-bold">{vessel.heading}°</span></div>
+                  <div>Status: <span className="font-bold text-amber-600">{vessel.status}</span></div>
+                  <div>ASI Risk: <span className="font-bold text-rose-600">{vessel.asiScore}%</span></div>
                 </div>
 
                 <button
-                  onClick={() => onSelectVessel(v)}
+                  onClick={() => onSelectVessel(vessel)}
                   className="w-full py-1 rounded bg-[#0B2545] hover:bg-[#1E5FBF] text-white text-[10px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
                 >
                   <Eye className="w-3 h-3" />
@@ -464,8 +602,7 @@ export const NationalMap: React.FC<NationalMapProps> = ({
               </div>
             </Popup>
           </Marker>
-          );
-        })}
+        ))}
       </MapContainer>
 
       {/* Compass "N" Top Right */}

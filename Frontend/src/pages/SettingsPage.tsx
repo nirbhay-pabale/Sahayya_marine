@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import sahayyaApi, { getAvatarUrl } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import { useLanguage, LanguageCode } from "../context/LanguageContext";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import {
   User,
   Bell,
@@ -36,6 +38,15 @@ import {
   Trash2,
   Camera,
   Loader2,
+  Lock,
+  QrCode,
+  Volume2,
+  Compass,
+  FileCheck,
+  Send,
+  Globe2,
+  Cpu,
+  Fingerprint,
 } from "lucide-react";
 import { ReportGenerationModal } from "../components/ReportGenerationModal";
 
@@ -43,13 +54,14 @@ type SettingsTab =
   | "profile"
   | "notifications"
   | "datasources"
-  | "ai"
+  | "security"
   | "accessibility"
   | "users";
 
 export const SettingsPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, updateUser } = useAuth();
+  const { t, language, setLanguage } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sidebar & Top Nav
@@ -58,22 +70,37 @@ export const SettingsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Profile Form State
-  const [profileName, setProfileName] = useState(user?.name || "Commander S. Kumar");
-  const [profileEmail, setProfileEmail] = useState(user?.email || "s.kumar@indiancoastguard.gov.in");
-  const [profileOrg, setProfileOrg] = useState(user?.organization || "Indian Coast Guard (West HQ)");
-  const [profileRole, setProfileRole] = useState(user?.role || "Senior Maritime Operations Officer");
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(user?.avatar_url || null);
+  // Profile Form State - sync with active logged in user
+  const [profileName, setProfileName] = useState(() => user?.name || "Officer");
+  const [profileEmail, setProfileEmail] = useState(() => user?.email || "officer@indiancoastguard.gov.in");
+  const [profileOrg, setProfileOrg] = useState(() => user?.organization || "Indian Coast Guard (West HQ)");
+  const [profileRole, setProfileRole] = useState(() => user?.role || "Senior Maritime Operations Officer");
+  const [profileStation, setProfileStation] = useState("Mumbai Command Center (West Sector)");
+  const [profileCallSign, setProfileCallSign] = useState("ICG-DELTA-01");
+  const [digitalSignatureEnabled, setDigitalSignatureEnabled] = useState(true);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(() => user?.avatar_url || null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // Sync state whenever active auth user updates
+  useEffect(() => {
+    if (user) {
+      if (user.name) setProfileName(user.name);
+      if (user.email) setProfileEmail(user.email);
+      if (user.organization) setProfileOrg(user.organization);
+      if (user.role) setProfileRole(user.role);
+      if (user.avatar_url) setAvatarUrl(user.avatar_url);
+    }
+  }, [user]);
 
   // Notifications State (Stage 19)
   const [channels, setChannels] = useState({
     email: true,
     sms: true,
     inApp: true,
-    push: false,
+    push: true,
+    navtex: false,
   });
   const [severityThreshold, setSeverityThreshold] = useState("High");
   const [recipientGroups, setRecipientGroups] = useState({
@@ -81,117 +108,130 @@ export const SettingsPage: React.FC = () => {
     portAuthority: true,
     pollutionBoard: true,
     fishermen: false,
+    marinePolice: true,
   });
+  const [isTestingAlert, setIsTestingAlert] = useState(false);
 
   // Data Sources State (Stage 3)
-  const [pluginEnabled, setPluginEnabled] = useState(true);
+  const [sensorsList, setSensorsList] = useState([
+    {
+      id: "sar",
+      name: "Copernicus Sentinel-1 SAR",
+      type: "C-Band Synthetic Aperture Radar (IW Dual-Pol)",
+      status: "Connected",
+      lastSync: "Just now (4.2s ago)",
+      latency: "142 ms",
+      throughput: "1.2 Gbps",
+      encryption: "TLS 1.3 · AES-256",
+      statusColor: "text-emerald-700 bg-emerald-50 border-emerald-200",
+    },
+    {
+      id: "opt",
+      name: "Sentinel-2 Multi-Spectral (Optical)",
+      type: "VNIR / SWIR 10m Ground Resolution Imagery",
+      status: "Connected",
+      lastSync: "3 min ago",
+      latency: "185 ms",
+      throughput: "850 Mbps",
+      encryption: "TLS 1.3",
+      statusColor: "text-emerald-700 bg-emerald-50 border-emerald-200",
+    },
+    {
+      id: "ais",
+      name: "Coastal & Satellite AIS Grid",
+      type: "DGLL VTS West Coast & exactEarth Space AIS",
+      status: "Live Stream",
+      lastSync: "Real-time (< 1s)",
+      latency: "28 ms",
+      throughput: "30 Vessels/sec",
+      encryption: "NMEA-0183 Over SSL",
+      statusColor: "text-sky-700 bg-sky-50 border-sky-200",
+    },
+    {
+      id: "hydro",
+      name: "INCOIS & CMEMS Global Currents",
+      type: "Coupled Hydrodynamic Current & Wave Fields",
+      status: "Connected",
+      lastSync: "12 min ago",
+      latency: "96 ms",
+      throughput: "1/12° HYCOM Grid",
+      encryption: "HTTPS / REST",
+      statusColor: "text-emerald-700 bg-emerald-50 border-emerald-200",
+    },
+    {
+      id: "wind",
+      name: "ECMWF & IMD Wind Kinematics",
+      type: "ERA5 10m Marine Atmospheric Boundary Vector",
+      status: "Connected",
+      lastSync: "8 min ago",
+      latency: "74 ms",
+      throughput: "0.25° Spatial Mesh",
+      encryption: "HTTPS / GRIB2",
+      statusColor: "text-emerald-700 bg-emerald-50 border-emerald-200",
+    },
+  ]);
+  const [resyncingId, setResyncingId] = useState<string | null>(null);
+
+  // Security Vault State
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(true);
+  const [autoSessionTimeout, setAutoSessionTimeout] = useState("30");
+  const [auditLogs] = useState([
+    { id: 1, action: "Forensic Report Generation", user: "Nirbhay Pabale", ip: "192.168.1.45", location: "Mumbai HQ", time: "18 Sep 22:30 IST", status: "Verified" },
+    { id: 2, action: "What-If Hydrodynamic Hindcast", user: "Nirbhay Pabale", ip: "192.168.1.45", location: "Mumbai HQ", time: "18 Sep 22:15 IST", status: "Verified" },
+    { id: 3, action: "AIS Transponder Anomaly Flagged", user: "Auto Engine", ip: "10.0.4.12", location: "Edge Server", time: "18 Sep 21:40 IST", status: "Logged" },
+    { id: 4, action: "User Credentials Auth", user: "Nirbhay Pabale", ip: "192.168.1.45", location: "Mumbai HQ", time: "18 Sep 21:00 IST", status: "Success" },
+  ]);
 
   // Accessibility State
   const [selectedLanguage, setSelectedLanguage] = useState("en");
+  const [coordFormat, setCoordFormat] = useState("dd"); // dd or dms
+  const [soundAlerts, setSoundAlerts] = useState(true);
   const [highContrast, setHighContrast] = useState(false);
   const [largeText, setLargeText] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
 
   // Users State
-  const [teamMembers, setTeamMembers] = useState([
-    { id: 1, name: "Commander S. Kumar", email: "s.kumar@indiancoastguard.gov.in", role: "Incident Commander", status: "Active", agency: "ICG West" },
-    { id: 2, name: "Dr. Ananya Sharma", email: "a.sharma@incois.gov.in", role: "Oceanographic Modeler", status: "Active", agency: "INCOIS" },
-    { id: 3, name: "R. Narayanan", email: "r.narayanan@dgshipping.gov.in", role: "VTS Specialist", status: "Active", agency: "DG Shipping" },
-    { id: 4, name: "K. Deshmukh", email: "k.deshmukh@mpcb.gov.in", role: "Environmental Officer", status: "Pending", agency: "MPCB" },
+  const [teamMembers, setTeamMembers] = useState(() => [
+    { id: 1, name: user?.name || "Nirbhay Pabale", email: user?.email || "officer@indiancoastguard.gov.in", role: "Incident Commander", status: "Active", agency: "ICG West Command", clearance: "Level-4 (Command)" },
+    { id: 2, name: "Dr. Ananya Sharma", email: "a.sharma@incois.gov.in", role: "Oceanographic Modeler", status: "Active", agency: "INCOIS Hyderabad", clearance: "Level-3 (Analyst)" },
+    { id: 3, name: "Capt. R. Narayanan", email: "r.narayanan@dgshipping.gov.in", role: "VTS Operations Chief", status: "Active", agency: "DG Shipping Mumbai", clearance: "Level-3 (VTS)" },
+    { id: 4, name: "K. Deshmukh", email: "k.deshmukh@mpcb.gov.in", role: "Environmental Inspector", status: "Pending", agency: "Maharashtra SPCB", clearance: "Level-2 (Auditor)" },
   ]);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("Senior Analyst");
-
-  // Ollama & Google Gemini AI Settings State
-  const [ollamaBaseUrl, setOllamaBaseUrl] = useState("http://localhost:11434");
-  const [ollamaApiKey, setOllamaApiKey] = useState("");
-  const [ollamaModel, setOllamaModel] = useState("gemma3");
-  const [googleApiKey, setGoogleApiKey] = useState(import.meta.env.VITE_GOOGLE_API_KEY || "");
-  const [geminiModel, setGeminiModel] = useState("gemini-3.5-flash");
-  const [ollamaStatus, setOllamaStatus] = useState<any | null>(null);
-  const [isTestingOllama, setIsTestingOllama] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [showGoogleKey, setShowGoogleKey] = useState(false);
+  const [inviteAgency, setInviteAgency] = useState("Indian Coast Guard (West HQ)");
 
   // Helper for avatar initials
   const getInitials = (name: string) => {
-    if (!name) return "SK";
-    const parts = name.trim().split(" ");
+    if (!name) return "OF";
+    const parts = name.trim().split(" ").filter(Boolean);
+    if (parts.length === 0) return "OF";
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
-  // Fetch initial profile & AI status on mount
+  // Fetch initial profile on mount
   useEffect(() => {
-    // Fetch officer profile from backend
     sahayyaApi.settings.getProfile()
       .then((profile) => {
         if (profile) {
-          if (profile.name) setProfileName(profile.name);
-          if (profile.email) setProfileEmail(profile.email);
-          if (profile.organization) setProfileOrg(profile.organization);
-          if (profile.role) setProfileRole(profile.role);
-          if (profile.avatar_url) {
+          if (!user?.name && profile.name) setProfileName(profile.name);
+          if (!user?.email && profile.email) setProfileEmail(profile.email);
+          if (!user?.organization && profile.organization) setProfileOrg(profile.organization);
+          if (!user?.role && profile.role) setProfileRole(profile.role);
+          if (profile.avatar_url && !user?.avatar_url) {
             setAvatarUrl(profile.avatar_url);
-            updateUser({ avatar_url: profile.avatar_url, name: profile.name, organization: profile.organization, role: profile.role });
+            updateUser({ avatar_url: profile.avatar_url });
           }
         }
       })
       .catch((err) => {
         console.warn("Could not load backend officer profile:", err);
       });
-
-    // Fetch AI status
-    sahayyaApi.ai.getStatus()
-      .then((st) => {
-        setOllamaStatus(st);
-        if (st.base_url) setOllamaBaseUrl(st.base_url);
-        if (st.model) setOllamaModel(st.model);
-        if (st.gemini_model) setGeminiModel(st.gemini_model);
-      })
-      .catch(() => {});
   }, []);
-
-  const handleTestOllama = async () => {
-    setIsTestingOllama(true);
-    try {
-      const res = await sahayyaApi.ai.getStatus();
-      setOllamaStatus(res);
-      if (res.status === "connected") {
-        if (res.provider === "google_gemini") {
-          triggerToast(`Connected to Google AI (${res.model || "gemini-3.6-flash"}) successfully!`);
-        } else {
-          triggerToast(`Connected to Ollama (${res.model}) successfully!`);
-        }
-      } else {
-        triggerToast("Ollama & Google AI offline. Maritime Defense heuristic fallback active.");
-      }
-    } catch {
-      triggerToast("AI intelligence test ping completed.");
-    } finally {
-      setIsTestingOllama(false);
-    }
-  };
-
-  const handleSaveOllama = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const res = await sahayyaApi.ai.updateConfig({
-        base_url: ollamaBaseUrl,
-        model: ollamaModel,
-        api_key: ollamaApiKey,
-        google_api_key: googleApiKey,
-        gemini_model: geminiModel,
-      });
-      setOllamaStatus(res.health);
-      triggerToast("AI Configuration (Google Gemini & Ollama) saved successfully.");
-    } catch (err: any) {
-      triggerToast(`Saved locally. ${err?.message || ""}`);
-    }
-  };
 
   const triggerToast = (msg: string) => {
     setToastMessage(msg);
@@ -249,7 +289,6 @@ export const SettingsPage: React.FC = () => {
       });
     } finally {
       setIsUploadingAvatar(false);
-      // Reset input value so same file can be picked again if desired
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -291,7 +330,7 @@ export const SettingsPage: React.FC = () => {
         role: profileRole,
         avatar_url: avatarUrl,
       });
-      triggerToast("Profile & agency credentials updated successfully.");
+      triggerToast("Profile credentials & digital signature updated successfully.");
     } catch (err: any) {
       updateUser({
         name: profileName,
@@ -306,6 +345,31 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  // Resync specific sensor feed
+  const handleResyncSensor = (id: string, name: string) => {
+    setResyncingId(id);
+    setTimeout(() => {
+      setResyncingId(null);
+      setSensorsList((prev) =>
+        prev.map((s) =>
+          s.id === id
+            ? { ...s, lastSync: "Just now (Synced)", latency: `${Math.floor(Math.random() * 40 + 20)} ms` }
+            : s
+        )
+      );
+      triggerToast(`Successfully re-established encrypted handshake with ${name}`);
+    }, 1200);
+  };
+
+  // Test Alert Dispatch Simulator
+  const handleSimulateAlert = () => {
+    setIsTestingAlert(true);
+    setTimeout(() => {
+      setIsTestingAlert(false);
+      triggerToast("Broadcasted test alert to all active duty channels (Email, SMS Flash, In-App).");
+    }, 1000);
+  };
+
   const handleInviteUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteName || !inviteEmail) return;
@@ -317,13 +381,14 @@ export const SettingsPage: React.FC = () => {
         email: inviteEmail,
         role: inviteRole,
         status: "Pending",
-        agency: "Invited Officer",
+        agency: inviteAgency,
+        clearance: "Level-3 (Analyst)",
       },
     ]);
     setShowInviteModal(false);
     setInviteName("");
     setInviteEmail("");
-    triggerToast(`Invitation sent to ${inviteEmail}`);
+    triggerToast(`Official credentials invitation dispatched to ${inviteEmail}`);
   };
 
   return (
@@ -351,27 +416,41 @@ export const SettingsPage: React.FC = () => {
             <Menu className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#0B2545] to-[#1E5FBF] flex items-center justify-center text-white shadow-sm font-black text-base">
-              S
-            </div>
+          <div 
+            onClick={() => navigate("/dashboard")}
+            className="flex items-center gap-3 cursor-pointer group select-none"
+          >
+            <img 
+              src="/sahayya-logo.png" 
+              alt="Sahayya Logo" 
+              className="h-10 w-auto object-contain transition-transform duration-200 group-hover:scale-105 drop-shadow-sm" 
+            />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-display font-bold text-[#0B2545] text-base tracking-[0.14em] leading-none">
+                <span className="font-display font-bold text-[#0B2545] text-base sm:text-lg tracking-[0.14em] leading-none">
                   SAHAYYA
                 </span>
-                <span className="badge-text px-1.5 py-0.2 bg-sky-100 text-[#1E5FBF] rounded-sm uppercase tracking-wider font-body">
-                  Config
+                <span className="badge-text px-1.5 py-0.5 bg-sky-100 text-[#1E5FBF] border border-sky-300/60 rounded-full uppercase tracking-wider font-body text-[9px] font-bold">
+                  CONFIG
                 </span>
               </div>
-              <div className="micro-text text-slate-500 font-body leading-tight">
-                System Administration & Telemetry Configurations
+              <div className="micro-text text-slate-500 font-body leading-tight mt-0.5 hidden sm:block">
+                System Administration &amp; Telemetry Configurations
               </div>
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-3 font-body">
+          {/* Multi-Language Selector */}
+          <LanguageSwitcher variant="light" />
+
+          {/* Quick Security Badge */}
+          <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-xs font-semibold">
+            <Shield className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Clearance: Level-4 (Top Command)</span>
+          </div>
+
           <div className="flex items-center gap-2 px-3 py-1.5 bg-sky-50 rounded-xl border border-sky-100">
             <div className="w-7 h-7 rounded-lg overflow-hidden bg-[#0B2545] text-white flex items-center justify-center text-[10px] font-bold shadow-xs shrink-0">
               {(previewUrl || avatarUrl) ? (
@@ -392,9 +471,10 @@ export const SettingsPage: React.FC = () => {
 
           <button
             onClick={() => navigate("/dashboard")}
-            className="btn-text text-xs text-[#1E5FBF] hover:underline cursor-pointer"
+            className="btn-text text-xs text-[#1E5FBF] hover:underline cursor-pointer flex items-center gap-1"
           >
-            &larr; Back to Dashboard
+            <span>&larr;</span>
+            <span>{t("nav.home", "Dashboard")}</span>
           </button>
         </div>
       </header>
@@ -411,17 +491,19 @@ export const SettingsPage: React.FC = () => {
         >
           <div className="flex flex-col items-center gap-2.5 w-full px-2">
             {[
-              { id: "Dashboard", icon: Home, label: "Home", path: "/dashboard" },
-              { id: "Map", icon: MapIcon, label: "Map", path: "/map" },
-              { id: "Incidents", icon: Activity, label: "Incidents", path: "/incidents/IN-MH-2026" },
-              { id: "Vessels", icon: Ship, label: "Vessels", path: "/vessels" },
-              { id: "Analysis", icon: BarChart3, label: "Analysis", path: "/analysis" },
-              { id: "Settings", icon: SettingsIcon, label: "Settings", path: "/settings" },
-              { id: "Help", icon: HelpCircle, label: "Help", path: "" },
+              { id: "Dashboard", icon: Home, labelKey: "nav.home", fallback: "Home", path: "/dashboard" },
+              { id: "Map", icon: MapIcon, labelKey: "nav.map", fallback: "Map", path: "/map" },
+              { id: "Incidents", icon: Activity, labelKey: "nav.incidents", fallback: "Incidents", path: "/incidents/IN-MH-2026" },
+              { id: "Vessels", icon: Ship, labelKey: "nav.vessels", fallback: "Vessels", path: "/vessels" },
+              { id: "Analysis", icon: BarChart3, labelKey: "nav.analysis", fallback: "Analysis", path: "/analysis" },
+              { id: "Authority", icon: Send, labelKey: "nav.authority", fallback: "Submit to Authority", path: "/authority" },
+              { id: "Settings", icon: SettingsIcon, labelKey: "nav.settings", fallback: "Settings", path: "/settings" },
+              { id: "Help", icon: HelpCircle, labelKey: "nav.help", fallback: "Help", path: "/help" },
             ].map((item) => {
               const Icon = item.icon;
               const isActive = activeNav === item.id;
               const isIndigoAccent = item.id === "Analysis";
+              const label = t(item.labelKey, item.fallback);
               return (
                 <button
                   key={item.id}
@@ -438,51 +520,64 @@ export const SettingsPage: React.FC = () => {
                       ? "text-indigo-200 hover:text-white hover:bg-white/10"
                       : "text-slate-300 hover:text-white hover:bg-white/10"
                   }`}
-                  title={item.label}
+                  title={label}
                 >
                   <Icon className="w-5 h-5 stroke-[1.8]" />
-                  <span className="text-[9px] font-medium tracking-tight font-body">{item.label}</span>
+                  <span className="text-[9px] font-medium tracking-tight font-body truncate max-w-[52px]">{label}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="px-1 text-center font-body">
-            <div className="w-6 h-6 mx-auto mb-1 text-sky-400 opacity-60">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M2 12c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7-0.5" />
-              </svg>
+          <div className="px-1 text-center font-body flex flex-col items-center">
+            <div 
+              onClick={() => navigate("/dashboard")}
+              className="w-10 h-10 mx-auto mb-1.5 rounded-full p-1 bg-white/10 backdrop-blur-md border border-white/20 shadow-md flex items-center justify-center transition-transform hover:scale-110 cursor-pointer"
+              title="Sahayya Maritime Intelligence"
+            >
+              <img src="/sahayya-logo.png" alt="Sahayya" className="w-full h-full object-contain" />
             </div>
-            <p className="text-[8px] text-slate-400 leading-tight">
-              Safer Oceans.<br />Stronger Tomorrow.
+            <p className="text-[8.5px] text-slate-300 font-medium leading-tight">
+              {t("brand.slogan", "Safer Oceans. Stronger Tomorrow.")}
             </p>
           </div>
         </aside>
 
         {/* Settings Content Area */}
         <main className="flex-1 min-h-0 h-full overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 custom-tactical-scrollbar scroll-smooth">
-          <div className="max-w-5xl mx-auto space-y-6 pb-20">
-            {/* Header */}
-            <div>
-              <h1 className="heading-page text-[#0B2545]">
-                Settings &amp; System Configuration
-              </h1>
-              <p className="body-text text-xs text-slate-500 mt-1 font-body">
-                Configure organizational identity, multi-stakeholder alert pipelines, satellite sensor streams, and user access.
-              </p>
+          <div className="max-w-6xl mx-auto space-y-6 pb-20">
+            {/* Header Title Section */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h1 className="heading-page text-2xl sm:text-3xl font-bold font-display text-[#0B2545] tracking-tight">
+                  {t("settings.title", "Settings & Tactical Administration")}
+                </h1>
+                <p className="body-text text-xs text-slate-500 mt-1 font-body">
+                  {t("settings.subtitle", "Configure operational officer credentials, automated response alert pipelines, sensor streams, and security policies.")}
+                </p>
+              </div>
+
+              <button
+                onClick={() => setShowReportModal(true)}
+                className="px-3.5 py-1.5 rounded-xl border border-[#DCEEFC] bg-white hover:bg-[#F0F7FD] text-xs font-semibold text-[#0B2545] flex items-center gap-2 shadow-xs transition-all cursor-pointer font-body self-start sm:self-auto"
+                title="Generate certified system configuration & compliance dossier"
+              >
+                <FileCheck className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                <span>{t("action.generateReport", "Export System Audit Dossier")}</span>
+              </button>
             </div>
 
             {/* Main Settings Card with Left Vertical Nav */}
-            <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-xl overflow-hidden flex flex-col md:flex-row min-h-[580px]">
-              {/* Internal Sub-nav Vertical Tabs */}
+            <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-[#E1EEF9] shadow-[0_8px_30px_rgba(30,95,191,0.06)] overflow-hidden flex flex-col md:flex-row min-h-[640px]">
+              {/* Internal Sub-nav Vertical Tabs (Ollama completely removed) */}
               <div className="w-full md:w-64 border-b md:border-b-0 md:border-r border-[#E1EEF9] bg-[#F8FBFE] p-3 sm:p-4 shrink-0 flex flex-row md:flex-col gap-1.5 overflow-x-auto md:overflow-x-visible font-body">
                 {[
-                  { id: "profile", label: "Profile & Organization", icon: User },
-                  { id: "notifications", label: "Notifications & Alerts", icon: Bell, badge: "Stage 19" },
-                  { id: "datasources", label: "Data Sources & Sensors", icon: Database, badge: "Stage 3" },
-                  { id: "ai", label: "Ollama AI & API Key", icon: Sparkles, badge: "AI Core" },
-                  { id: "accessibility", label: "Language & Accessibility", icon: Languages },
-                  { id: "users", label: "User & Role Management", icon: Users },
+                  { id: "profile", label: t("settings.profileTab", "Profile & Identity"), icon: User, badge: "Active" },
+                  { id: "notifications", label: t("settings.notificationsTab", "Alert Pipelines"), icon: Bell, badge: "Stage 19" },
+                  { id: "datasources", label: t("settings.datasourcesTab", "Sensors & Telemetry"), icon: Database, badge: "Stage 3" },
+                  { id: "security", label: t("settings.securityTab", "Security & Audit Vault"), icon: Shield, badge: "SecOps" },
+                  { id: "users", label: t("settings.usersTab", "User Governance"), icon: Users, badge: "RBAC" },
+                  { id: "accessibility", label: t("settings.accessibilityTab", "Locale & Ergonomics"), icon: Languages },
                 ].map((tab) => {
                   const Icon = tab.icon;
                   const isSel = activeTab === tab.id;
@@ -498,12 +593,14 @@ export const SettingsPage: React.FC = () => {
                     >
                       <div className="flex items-center gap-2.5">
                         <Icon className="w-4 h-4 shrink-0" />
-                        <span>{tab.label}</span>
+                        <span className="font-semibold">{tab.label}</span>
                       </div>
                       {tab.badge && (
                         <span
-                          className={`badge-text px-1.5 py-0.2 rounded-md ${
-                            isSel ? "bg-white/20 text-white" : "bg-sky-100 text-[#1E5FBF]"
+                          className={`text-[9.5px] px-1.5 py-0.5 rounded-md font-mono ${
+                            isSel
+                              ? "bg-white/20 text-white font-bold"
+                              : "bg-slate-200/70 text-slate-600"
                           }`}
                         >
                           {tab.badge}
@@ -516,9 +613,11 @@ export const SettingsPage: React.FC = () => {
 
               {/* Tab Panels */}
               <div className="flex-1 p-6 sm:p-8 overflow-y-auto font-body">
-                {/* TAB 1: Profile & Organization */}
+                {/* ========================================================= */}
+                {/* TAB 1: Profile & Operational Identity                     */}
+                {/* ========================================================= */}
                 {activeTab === "profile" && (
-                  <form onSubmit={handleSaveProfile} className="space-y-6 max-w-xl animate-fadeIn">
+                  <div className="space-y-6 max-w-3xl animate-fadeIn font-body">
                     {/* Hidden File Input for system photo picker */}
                     <input
                       ref={fileInputRef}
@@ -530,190 +629,295 @@ export const SettingsPage: React.FC = () => {
                     />
 
                     <div>
-                      <h2 className="heading-secondary text-[#0B2545]">Officer Profile &amp; Agency</h2>
+                      <h2 className="heading-secondary text-base sm:text-lg font-bold text-[#0B2545] font-display">
+                        Officer Profile &amp; Operational Credentials
+                      </h2>
                       <p className="body-text text-xs text-slate-500 mt-0.5 font-body">
-                        Official designation and digital avatar for maritime forensic dossiers and incident commanding.
+                        Official designation, cryptographic signature, and agency authorization for incident commanding and court evidence dossiers.
                       </p>
                     </div>
 
-                    {/* Photo Avatar Selector Section */}
-                    <div className="p-4 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50/60 via-white to-blue-50/40 shadow-xs flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                      {/* Avatar Image / Monogram Container */}
-                      <div className="relative group shrink-0">
-                        <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-md border-2 border-sky-300 ring-4 ring-sky-100 flex items-center justify-center bg-gradient-to-br from-[#0B2545] to-[#1E5FBF] text-white">
-                          {(previewUrl || avatarUrl) ? (
-                            <img
-                              src={previewUrl || getAvatarUrl(avatarUrl)}
-                              alt={profileName}
-                              className="w-full h-full object-cover"
-                              onError={() => {
-                                setPreviewUrl(null);
-                                setAvatarUrl(null);
-                              }}
-                            />
-                          ) : (
-                            <span className="font-display font-black text-2xl tracking-wider text-white">
-                              {getInitials(profileName)}
-                            </span>
-                          )}
+                    {/* Officer Digital ID Holographic Card Preview */}
+                    <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#0B2545] via-[#123A66] to-[#1E5FBF] text-white shadow-xl relative overflow-hidden border border-sky-400/30">
+                      {/* Ambient Background Grid Pattern */}
+                      <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff08_1px,transparent_1px),linear-gradient(to_bottom,#ffffff08_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none" />
+                      <div className="absolute -right-8 -bottom-8 w-44 h-44 rounded-full bg-sky-400/10 blur-2xl pointer-events-none" />
 
-                          {/* Hover Overlay Button */}
-                          <button
-                            type="button"
-                            onClick={handlePhotoChangeClick}
-                            disabled={isUploadingAvatar}
-                            className="absolute inset-0 bg-black/45 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white cursor-pointer rounded-2xl"
-                            title="Click to select new photo from system"
-                          >
-                            <Camera className="w-5 h-5 mb-0.5" />
-                            <span className="text-[9px] font-semibold">Change</span>
-                          </button>
+                      <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                          {/* Photo Avatar */}
+                          <div className="relative group shrink-0">
+                            <div className="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl overflow-hidden shadow-lg border-2 border-sky-300 ring-4 ring-white/10 flex items-center justify-center bg-gradient-to-br from-[#0B2545] to-[#1E5FBF] text-white">
+                              {(previewUrl || avatarUrl) ? (
+                                <img
+                                  src={previewUrl || getAvatarUrl(avatarUrl)}
+                                  alt={profileName}
+                                  className="w-full h-full object-cover"
+                                  onError={() => {
+                                    setPreviewUrl(null);
+                                    setAvatarUrl(null);
+                                  }}
+                                />
+                              ) : (
+                                <span className="font-display font-black text-2xl tracking-wider text-white">
+                                  {getInitials(profileName)}
+                                </span>
+                              )}
 
-                          {/* Upload Spinner */}
-                          {isUploadingAvatar && (
-                            <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center text-white rounded-2xl">
-                              <Loader2 className="w-6 h-6 animate-spin text-sky-300" />
+                              {/* Change Button Overlay */}
+                              <button
+                                type="button"
+                                onClick={handlePhotoChangeClick}
+                                disabled={isUploadingAvatar}
+                                className="absolute inset-0 bg-black/50 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white cursor-pointer rounded-2xl"
+                                title="Click to upload new photo"
+                              >
+                                <Camera className="w-5 h-5 mb-0.5" />
+                                <span className="text-[9px] font-semibold">Change</span>
+                              </button>
+
+                              {isUploadingAvatar && (
+                                <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center text-white rounded-2xl">
+                                  <Loader2 className="w-6 h-6 animate-spin text-sky-300" />
+                                </div>
+                              )}
                             </div>
-                          )}
+
+                            <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-[#0B2545] shadow-xs flex items-center justify-center">
+                              <Check className="w-2.5 h-2.5 text-white stroke-[3]" />
+                            </div>
+                          </div>
+
+                          {/* Credentials Details */}
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm sm:text-base font-bold text-white font-display">
+                                {profileName || "Officer"}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-sky-400/20 text-sky-200 border border-sky-300/30 text-[9px] font-mono font-bold uppercase tracking-wider">
+                                {profileCallSign}
+                              </span>
+                            </div>
+                            <div className="text-xs text-sky-200/90 font-medium mt-0.5">
+                              {profileRole}
+                            </div>
+                            <div className="text-[11px] text-sky-300/80 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
+                              <span>{profileOrg}</span>
+                              <span>&bull;</span>
+                              <span>{profileStation}</span>
+                            </div>
+                          </div>
                         </div>
 
-                        {/* Verified Badge */}
-                        <div
-                          className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-white shadow-xs flex items-center justify-center"
-                          title="Verified Maritime Officer Account"
-                        >
-                          <Check className="w-2.5 h-2.5 text-white stroke-[3]" />
+                        {/* ID Hologram / Verified Badge */}
+                        <div className="flex sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto border-t sm:border-t-0 border-white/10 pt-2 sm:pt-0">
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 backdrop-blur-md border border-white/20 text-[10px] font-mono text-sky-200">
+                            <Fingerprint className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>ID: SY-ICG-8492</span>
+                          </div>
+                          <div className="text-[9px] font-mono text-sky-300/70 mt-1 hidden sm:block">
+                            E-Stamp: SHA256-AUTH
+                          </div>
                         </div>
                       </div>
+                    </div>
 
-                      {/* Photo Actions & Explanations */}
-                      <div className="space-y-2 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
+                    {/* Form Controls */}
+                    <form onSubmit={handleSaveProfile} className="space-y-4 text-xs font-body">
+                      {/* Photo Actions Row */}
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handlePhotoChangeClick}
+                          disabled={isUploadingAvatar}
+                          className="px-3.5 py-1.5 rounded-xl border border-sky-300 bg-white hover:bg-sky-50 text-[#1E5FBF] btn-text flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer text-xs font-semibold"
+                        >
+                          <Upload className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                          <span>{isUploadingAvatar ? "Uploading..." : "Upload New Photo"}</span>
+                        </button>
+
+                        {(previewUrl || avatarUrl) && (
                           <button
                             type="button"
-                            onClick={handlePhotoChangeClick}
+                            onClick={handleRemovePhoto}
                             disabled={isUploadingAvatar}
-                            className="px-3.5 py-1.5 rounded-xl border border-sky-300 bg-white hover:bg-sky-50 text-[#1E5FBF] btn-text flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer text-xs font-semibold"
+                            className="px-3 py-1.5 rounded-xl border border-rose-200 bg-white hover:bg-rose-50 text-rose-600 btn-text flex items-center gap-1 shadow-xs transition-colors cursor-pointer text-xs font-semibold"
                           >
-                            <Upload className="w-3.5 h-3.5 text-[#1E5FBF]" />
-                            <span>{isUploadingAvatar ? "Processing..." : "Change Photo"}</span>
+                            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                            <span>Remove Photo</span>
                           </button>
-
-                          {(previewUrl || avatarUrl) && (
-                            <button
-                              type="button"
-                              onClick={handleRemovePhoto}
-                              disabled={isUploadingAvatar}
-                              className="px-3 py-1.5 rounded-xl border border-rose-200 bg-white hover:bg-rose-50 text-rose-600 btn-text flex items-center gap-1 shadow-xs transition-colors cursor-pointer text-xs font-semibold"
-                              title="Remove custom photo and reset to initials"
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                              <span>Remove</span>
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="text-[11px] text-slate-500 font-body flex items-center gap-1.5">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                          <span>PNG, JPG, JPEG, or WebP up to 5MB</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4 text-xs">
-                      <div>
-                        <label className="input-label block text-slate-700 mb-1">Full Name</label>
-                        <input
-                          type="text"
-                          value={profileName}
-                          onChange={(e) => setProfileName(e.target.value)}
-                          className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold focus:outline-none focus:ring-2 focus:ring-[#1E5FBF]/30 font-body input-text"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="input-label block text-slate-700 mb-1">Official Gov Email</label>
-                        <input
-                          type="email"
-                          value={profileEmail}
-                          onChange={(e) => setProfileEmail(e.target.value)}
-                          className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold focus:outline-none focus:ring-2 focus:ring-[#1E5FBF]/30 font-body input-text"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="input-label block text-slate-700 mb-1">Organization / Department</label>
-                        <select
-                          value={profileOrg}
-                          onChange={(e) => setProfileOrg(e.target.value)}
-                          className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold font-body input-text"
-                        >
-                          <option value="Indian Coast Guard (West HQ)">Indian Coast Guard (West HQ)</option>
-                          <option value="Port Authority / VTS Directorate">Port Authority / VTS Directorate</option>
-                          <option value="State Pollution Control Board">State Pollution Control Board (SPCB)</option>
-                          <option value="Directorate General of Shipping">Directorate General of Shipping</option>
-                          <option value="INCOIS Ocean Modeling Team">INCOIS Ocean Modeling Team</option>
-                          <option value="Marine Environmental Regulator">Marine Environmental Regulator</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="input-label block text-slate-700 mb-1">Operational Role</label>
-                        <input
-                          type="text"
-                          value={profileRole}
-                          onChange={(e) => setProfileRole(e.target.value)}
-                          className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold focus:outline-none focus:ring-2 focus:ring-[#1E5FBF]/30 font-body input-text"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="pt-2">
-                      <button
-                        type="submit"
-                        disabled={isSavingProfile}
-                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white btn-text flex items-center gap-1.5 shadow-sm transition-all cursor-pointer font-body disabled:opacity-50"
-                      >
-                        {isSavingProfile ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Save className="w-4 h-4" />
                         )}
-                        <span>{isSavingProfile ? "Saving..." : "Save Profile Changes"}</span>
-                      </button>
-                    </div>
-                  </form>
+                        <span className="text-[11px] text-slate-400 font-body">Supported: PNG, JPG, WebP (Max 5MB)</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <label className="input-label block text-slate-700 font-semibold mb-1">
+                            Full Name (Officer / Investigator)
+                          </label>
+                          <input
+                            type="text"
+                            value={profileName}
+                            onChange={(e) => setProfileName(e.target.value)}
+                            placeholder="Enter full name"
+                            className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold focus:outline-none focus:ring-2 focus:ring-[#1E5FBF]/30 font-body input-text"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="input-label block text-slate-700 font-semibold mb-1">
+                            Official Government / Service Email
+                          </label>
+                          <input
+                            type="email"
+                            value={profileEmail}
+                            onChange={(e) => setProfileEmail(e.target.value)}
+                            placeholder="officer@agency.gov.in"
+                            className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold focus:outline-none focus:ring-2 focus:ring-[#1E5FBF]/30 font-body input-text"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="input-label block text-slate-700 font-semibold mb-1">
+                            Organization / Maritime Department
+                          </label>
+                          <select
+                            value={profileOrg}
+                            onChange={(e) => setProfileOrg(e.target.value)}
+                            className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold font-body input-text"
+                          >
+                            <option value="Indian Coast Guard (West HQ)">Indian Coast Guard (West HQ)</option>
+                            <option value="Port Authority / VTS Directorate">Port Authority / VTS Directorate</option>
+                            <option value="State Pollution Control Board">State Pollution Control Board (SPCB)</option>
+                            <option value="Directorate General of Shipping">Directorate General of Shipping</option>
+                            <option value="INCOIS Ocean Modeling Team">INCOIS Ocean Modeling Team</option>
+                            <option value="Marine Environmental Regulator">Marine Environmental Regulator</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="input-label block text-slate-700 font-semibold mb-1">
+                            Operational Role / Rank Designation
+                          </label>
+                          <input
+                            type="text"
+                            value={profileRole}
+                            onChange={(e) => setProfileRole(e.target.value)}
+                            placeholder="e.g. Senior Incident Commander"
+                            className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold focus:outline-none focus:ring-2 focus:ring-[#1E5FBF]/30 font-body input-text"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="input-label block text-slate-700 font-semibold mb-1">
+                            Command Sector / Operations Station
+                          </label>
+                          <input
+                            type="text"
+                            value={profileStation}
+                            onChange={(e) => setProfileStation(e.target.value)}
+                            placeholder="e.g. Mumbai Command Center"
+                            className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold focus:outline-none focus:ring-2 focus:ring-[#1E5FBF]/30 font-body input-text"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="input-label block text-slate-700 font-semibold mb-1">
+                            VHF Radio Call Sign / Code
+                          </label>
+                          <input
+                            type="text"
+                            value={profileCallSign}
+                            onChange={(e) => setProfileCallSign(e.target.value)}
+                            placeholder="e.g. ICG-DELTA-01"
+                            className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold focus:outline-none focus:ring-2 focus:ring-[#1E5FBF]/30 font-body input-text"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Digital Signature Toggle */}
+                      <div className="p-3.5 rounded-xl border border-sky-200 bg-sky-50/50 flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-xs text-[#0B2545] flex items-center gap-1.5">
+                            <FileCheck className="w-3.5 h-3.5 text-[#1E5FBF]" />
+                            <span>Courtroom Evidence Digital Signature Seal</span>
+                          </div>
+                          <p className="micro-text text-slate-500 mt-0.5">
+                            Automatically stamp exported PDF dossiers with your digital identifier and SHA-256 integrity seal.
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={digitalSignatureEnabled}
+                          onChange={(e) => setDigitalSignatureEnabled(e.target.checked)}
+                          className="w-4 h-4 rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="pt-3">
+                        <button
+                          type="submit"
+                          disabled={isSavingProfile}
+                          className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] hover:from-[#174EA6] hover:to-[#2275C6] text-white btn-text flex items-center gap-2 shadow-md hover:shadow-lg transition-all cursor-pointer font-body disabled:opacity-50"
+                        >
+                          {isSavingProfile ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Save className="w-4 h-4" />
+                          )}
+                          <span>{isSavingProfile ? "Updating Credentials..." : "Save Profile & Credentials"}</span>
+                        </button>
+                      </div>
+                    </form>
+                  </div>
                 )}
 
-                {/* TAB 2: Notifications & Alerts (Stage 19) */}
+                {/* ========================================================= */}
+                {/* TAB 2: Automated Alert Pipeline & Rapid Dispatch          */}
+                {/* ========================================================= */}
                 {activeTab === "notifications" && (
-                  <div className="space-y-6 max-w-xl animate-fadeIn">
-                    <div>
-                      <h2 className="heading-secondary text-[#0B2545]">Automated Alert Pipeline</h2>
-                      <p className="body-text text-xs text-slate-500 mt-0.5 font-body">
-                        Multi-channel notification triggers for verified hydrocarbon discharge and vessel loitering events.
-                      </p>
+                  <div className="space-y-6 max-w-2xl animate-fadeIn font-body">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h2 className="heading-secondary text-base sm:text-lg font-bold text-[#0B2545] font-display">
+                          Multi-Channel Alert Dispatch Pipeline
+                        </h2>
+                        <p className="body-text text-xs text-slate-500 mt-0.5 font-body">
+                          Configure automated event relays for verified hydrocarbon discharges, vessel loitering, and coastal impact hazards.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleSimulateAlert}
+                        disabled={isTestingAlert}
+                        className="px-3.5 py-1.5 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-[#1E5FBF] btn-text flex items-center gap-1.5 text-xs font-semibold cursor-pointer shadow-xs transition-colors"
+                      >
+                        <Send className={`w-3.5 h-3.5 ${isTestingAlert ? "animate-pulse text-[#1E5FBF]" : ""}`} />
+                        <span>{isTestingAlert ? "Dispatching..." : "Simulate Test Alert"}</span>
+                      </button>
                     </div>
 
-                    {/* Alert Channels */}
+                    {/* Alert Channels Grid */}
                     <div className="space-y-3">
-                      <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-[0.06em]">
-                        Active Alert Channels
+                      <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-wider">
+                        Operational Dispatch Channels
                       </h3>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
                         {[
-                          { key: "email", label: "Email Dispatch", desc: "Instant SAR summary to inbox" },
-                          { key: "sms", label: "SMS Urgent Relay", desc: "Flash SMS to duty officer" },
-                          { key: "inApp", label: "In-App Toast Alerts", desc: "Real-time browser popovers" },
-                          { key: "push", label: "Mobile Push Notifications", desc: "PWA Coast Guard mobile push" },
+                          { key: "email", label: "Email Dispatch Dossier", desc: "Instant SAR summary + PDF link to inbox" },
+                          { key: "sms", label: "SMS Urgent Flash Relay", desc: "Priority text alert to duty officers" },
+                          { key: "inApp", label: "In-App Tactical Toasts", desc: "Real-time command center alerts" },
+                          { key: "push", label: "PWA Mobile Push Alerts", desc: "Direct alert on authorized tablets/phones" },
+                          { key: "navtex", label: "NAVTEX Maritime Broadcast", desc: "Automated VHF coastal radio warning format" },
                         ].map((ch) => (
-                          <div
+                          <label
                             key={ch.key}
-                            className="p-3 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE] flex items-center justify-between"
+                            className="p-3 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE] flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
                           >
                             <div>
-                              <div className="font-semibold text-[#0B2545] font-body text-xs">{ch.label}</div>
-                              <div className="micro-text text-slate-500 font-body">{ch.desc}</div>
+                              <div className="font-semibold text-[#0B2545] text-xs">{ch.label}</div>
+                              <div className="micro-text text-slate-500">{ch.desc}</div>
                             </div>
                             <input
                               type="checkbox"
@@ -721,16 +925,16 @@ export const SettingsPage: React.FC = () => {
                               onChange={(e) =>
                                 setChannels({ ...channels, [ch.key]: e.target.checked })
                               }
-                              className="rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
+                              className="w-4 h-4 rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
                             />
-                          </div>
+                          </label>
                         ))}
                       </div>
                     </div>
 
                     {/* Severity Threshold */}
                     <div className="space-y-2">
-                      <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-[0.06em]">
+                      <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-wider">
                         Minimum Alert Trigger Threshold
                       </h3>
                       <div className="grid grid-cols-4 gap-2">
@@ -740,8 +944,11 @@ export const SettingsPage: React.FC = () => {
                             <button
                               key={sev}
                               type="button"
-                              onClick={() => setSeverityThreshold(sev)}
-                              className={`py-2 px-3 rounded-xl border btn-text transition-all cursor-pointer font-body ${
+                              onClick={() => {
+                                setSeverityThreshold(sev);
+                                triggerToast(`Alert threshold set to: ${sev.toUpperCase()}`);
+                              }}
+                              className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer font-body ${
                                 isSel
                                   ? "bg-[#0B2545] text-white border-[#0B2545] shadow-sm"
                                   : "bg-[#F8FBFE] text-slate-600 border-[#E1EEF9] hover:bg-slate-100"
@@ -754,25 +961,26 @@ export const SettingsPage: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Stakeholder Recipient Groups */}
-                    <div className="space-y-2">
-                      <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-[0.06em]">
-                        Stakeholder Auto-Alert Groups (Stage 19)
+                    {/* Stakeholder Recipient Matrix */}
+                    <div className="space-y-2.5">
+                      <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-wider">
+                        Stakeholder Auto-Notification Matrix (Stage 19)
                       </h3>
                       <div className="space-y-2">
                         {[
-                          { key: "coastGuard", label: "Indian Coast Guard Regional Command", count: "12 Officers" },
-                          { key: "portAuthority", label: "Major Ports VTS Operations Centers", count: "8 Stations" },
-                          { key: "pollutionBoard", label: "State Pollution Control Boards (SPCB)", count: "6 Agencies" },
+                          { key: "coastGuard", label: "Indian Coast Guard Regional Command (MRCC)", count: "12 Officers Active" },
+                          { key: "portAuthority", label: "Major Ports VTS Operations Centers", count: "8 Stations Connected" },
+                          { key: "pollutionBoard", label: "State Pollution Control Boards (SPCB)", count: "6 Regulatory Desks" },
                           { key: "fishermen", label: "Fishermen & Coastal Village Cooperatives", count: "34 Radio Cells" },
+                          { key: "marinePolice", label: "Coastal Marine Police Interceptor Stations", count: "14 Units on Station" },
                         ].map((grp) => (
                           <label
                             key={grp.key}
-                            className="p-2.5 rounded-xl border border-[#E1EEF9] bg-white flex items-center justify-between cursor-pointer hover:bg-slate-50 text-xs font-body"
+                            className="p-3 rounded-xl border border-[#E1EEF9] bg-white flex items-center justify-between cursor-pointer hover:bg-slate-50 text-xs transition-colors"
                           >
                             <div>
-                              <div className="font-semibold text-[#0B2545] font-body text-xs">{grp.label}</div>
-                              <div className="data-mono-sm text-slate-500 font-mono">{grp.count}</div>
+                              <div className="font-semibold text-[#0B2545]">{grp.label}</div>
+                              <div className="data-mono-sm text-slate-500 font-mono text-[10.5px]">{grp.count}</div>
                             </div>
                             <input
                               type="checkbox"
@@ -783,7 +991,7 @@ export const SettingsPage: React.FC = () => {
                                   [grp.key]: e.target.checked,
                                 })
                               }
-                              className="rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
+                              className="w-4 h-4 rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
                             />
                           </label>
                         ))}
@@ -792,462 +1000,302 @@ export const SettingsPage: React.FC = () => {
 
                     <button
                       type="button"
-                      onClick={() => triggerToast("Alert notification rules saved.")}
-                      className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] text-white btn-text flex items-center gap-1.5 shadow-sm cursor-pointer font-body"
+                      onClick={() => triggerToast("Alert notification rules and dispatch channels saved.")}
+                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] text-white btn-text flex items-center gap-2 shadow-sm hover:shadow-md transition-all cursor-pointer text-xs font-semibold"
                     >
                       <Save className="w-4 h-4" />
-                      <span>Update Notification Preferences</span>
+                      <span>Save Notification Preferences</span>
                     </button>
                   </div>
                 )}
 
-                {/* TAB 3: Data Sources & Integrations (Stage 3) */}
+                {/* ========================================================= */}
+                {/* TAB 3: Sensors & Telemetry Feeds                          */}
+                {/* ========================================================= */}
                 {activeTab === "datasources" && (
-                  <div className="space-y-6 max-w-2xl animate-fadeIn">
+                  <div className="space-y-6 max-w-3xl animate-fadeIn font-body">
                     <div>
-                      <h2 className="heading-secondary text-[#0B2545]">Data Sources &amp; Sensor Pipelines</h2>
+                      <h2 className="heading-secondary text-base sm:text-lg font-bold text-[#0B2545] font-display">
+                        Sensors &amp; Real-Time Intelligence Ingestion
+                      </h2>
                       <p className="body-text text-xs text-slate-500 mt-0.5 font-body">
-                        Real-time feeds ingestion status and external intelligence connectors.
+                        Active satellite radar constellations, maritime transponders, hydrodynamic models, and browser extension status.
                       </p>
                     </div>
 
-                    {/* Sensor Cards */}
-                    <div className="space-y-2.5 font-body">
-                      {[
-                        {
-                          name: "Copernicus Sentinel-1 SAR",
-                          type: "C-Band Synthetic Aperture Radar (IW Mode)",
-                          status: "Connected",
-                          lastSync: "12 Sep 17:00 UTC",
-                          latency: "4.2 min",
-                          statusColor: "text-emerald-700 bg-emerald-50 border-emerald-200",
-                        },
-                        {
-                          name: "Sentinel-2 Multi-Spectral (Optical)",
-                          type: "VNIR / SWIR 10m Resolution Imagery",
-                          status: "Connected",
-                          lastSync: "12 Sep 11:20 UTC",
-                          latency: "6.8 min",
-                          statusColor: "text-emerald-700 bg-emerald-50 border-emerald-200",
-                        },
-                        {
-                          name: "Coastal & Satellite AIS Stream",
-                          type: "Spire Maritime & DG Shipping Terrestrial AIS",
-                          status: "Syncing",
-                          lastSync: "Real-Time (5 sec ago)",
-                          latency: "< 2 sec",
-                          statusColor: "text-sky-700 bg-sky-50 border-sky-200",
-                        },
-                        {
-                          name: "Copernicus Marine CMEMS & INCOIS",
-                          type: "Hydrodynamic Ocean Current & Wave Vectors",
-                          status: "Connected",
-                          lastSync: "12 Sep 16:00 UTC",
-                          latency: "15 min",
-                          statusColor: "text-emerald-700 bg-emerald-50 border-emerald-200",
-                        },
-                        {
-                          name: "ECMWF / ERA5 & Open-Meteo",
-                          type: "10m Atmospheric Boundary Wind Kinematics",
-                          status: "Connected",
-                          lastSync: "12 Sep 17:30 UTC",
-                          latency: "10 min",
-                          statusColor: "text-emerald-700 bg-emerald-50 border-emerald-200",
-                        },
-                      ].map((s) => (
-                        <div
-                          key={s.name}
-                          className="p-3.5 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE] flex items-center justify-between"
-                        >
-                          <div>
-                            <div className="font-semibold text-xs text-[#0B2545] font-body">{s.name}</div>
-                            <div className="micro-text text-slate-500 font-body">{s.type}</div>
-                            <div className="data-mono-sm text-slate-400 font-mono mt-1">
-                              Last Sync: {s.lastSync} &nbsp;|&nbsp; Latency: {s.latency}
-                            </div>
-                          </div>
-                          <span className={`badge-text px-2 py-0.5 rounded-full border ${s.statusColor} font-body`}>
-                            ● {s.status}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* OceanShield AI Browser Plugin Card (Stage 3) */}
-                    <div className="p-4 rounded-xl border-2 border-sky-300 bg-gradient-to-r from-sky-50 to-indigo-50/50">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-lg bg-[#1E5FBF] text-white flex items-center justify-center shadow-xs">
-                            <Sparkles className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <h3 className="heading-section text-xs text-[#0B2545]">
-                              OceanShield AI Browser Plugin (Stage 3)
-                            </h3>
-                            <div className="data-mono-sm text-slate-500 font-mono">
-                              Chrome / Edge Secure Extension &bull; v1.4.2
-                            </div>
-                          </div>
-                        </div>
-
-                        <span className="badge-text px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 font-body">
-                          Active Integration
-                        </span>
-                      </div>
-
-                      <p className="body-text text-xs text-slate-600 mt-2 leading-relaxed font-body">
-                        Runs continuously in the background with encrypted WebSockets directly to the Sahayya intelligence server. Provides one-click quick actions: upload local SAR images, paste AIS telemetry links, query the vessel attribution copilot, and download courtroom-ready PDF dossiers without leaving maritime portals.
-                      </p>
-
-                      <div className="mt-3 pt-3 border-t border-sky-200/80 flex items-center justify-between font-body">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-slate-700">Telemetry Sync:</span>
-                          <span className="text-xs font-semibold text-emerald-600">Encrypted (TLS 1.3)</span>
-                        </div>
-
-                        <button
-                          onClick={() => triggerToast("OceanShield AI extension package verified.")}
-                          className="px-3 py-1.5 rounded-lg bg-[#0B2545] hover:bg-[#1E5FBF] text-white btn-text flex items-center gap-1 transition-colors cursor-pointer"
-                        >
-                          <span>Plugin Configuration</span>
-                          <ExternalLink className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB: Ollama & Google Gemini AI Configuration */}
-                {activeTab === "ai" && (
-                  <div className="space-y-6 max-w-xl animate-fadeIn">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-600 text-white flex items-center justify-center shadow-md">
-                          <Sparkles className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <h2 className="heading-secondary text-[#0B2545]">
-                            AI Maritime Intelligence &amp; LLM Keys
-                          </h2>
-                          <p className="body-text text-xs text-slate-500 font-body">
-                            Configure Google AI (Gemini 3.6 Flash) cloud API key and local/hosted Ollama for the 30 vessels fleet intelligence.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Status Card */}
-                    <div className={`p-4 rounded-xl border flex items-center justify-between ${
-                      ollamaStatus?.status === "connected"
-                        ? "bg-emerald-50/80 border-emerald-300"
-                        : "bg-amber-50/80 border-amber-300"
-                    }`}>
-                      <div className="flex items-center gap-3">
-                        <span className={`w-3 h-3 rounded-full ${
-                          ollamaStatus?.status === "connected" ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
-                        }`} />
-                        <div>
-                          <div className="text-xs font-semibold text-[#0B2545] font-body">
-                            {ollamaStatus?.status === "connected"
-                              ? ollamaStatus?.provider === "google_gemini"
-                                ? `Connected to Google AI (${ollamaStatus?.model || geminiModel})`
-                                : `Connected to Ollama Engine (${ollamaStatus?.model || ollamaModel})`
-                              : "AI Offline — Expert Maritime Heuristic Engine Active"}
-                          </div>
-                          <div className="data-mono-sm text-slate-500 font-mono mt-0.5">
-                            {ollamaStatus?.provider === "google_gemini"
-                              ? `Cloud Provider: Google Generative AI (REST) • Active Model: ${geminiModel}`
-                              : `Active Endpoint: ${ollamaBaseUrl} • Model: ${ollamaModel}`}
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handleTestOllama}
-                        disabled={isTestingOllama}
-                        className="px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 btn-text text-slate-700 flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50 font-body"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${isTestingOllama ? "animate-spin text-purple-600" : ""}`} />
-                        <span>Test Ping</span>
-                      </button>
-                    </div>
-
-                    {/* Form */}
-                    <form onSubmit={handleSaveOllama} className="space-y-4 text-xs font-body">
-                      {/* Section 1: Google AI (Gemini) */}
-                      <div className="p-3.5 rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50/70 to-blue-50/40 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-[#0B2545] flex items-center gap-1.5 font-body">
-                            <Sparkles className="w-3.5 h-3.5 text-[#1E5FBF]" />
-                            <span>Google AI (Gemini Cloud API Key)</span>
-                          </span>
-                          <span className="badge-text px-2 py-0.5 rounded-md bg-sky-100 text-sky-800 border border-sky-200 font-body">
-                            Recommended / Instant Active
-                          </span>
-                        </div>
-
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="input-label font-semibold text-slate-700 font-body">
-                              Google AI API Key
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => setShowGoogleKey(!showGoogleKey)}
-                              className="micro-text text-[#1E5FBF] font-semibold hover:underline cursor-pointer flex items-center gap-1 font-body"
-                            >
-                              {showGoogleKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                              <span>{showGoogleKey ? "Hide Key" : "Show Key"}</span>
-                            </button>
-                          </div>
-                          <input
-                            type={showGoogleKey ? "text" : "password"}
-                            value={googleApiKey}
-                            onChange={(e) => setGoogleApiKey(e.target.value)}
-                            placeholder="AQ.Ab8RN6... or AIzaSy..."
-                            className="w-full bg-white border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-mono focus:outline-none focus:border-[#1E5FBF] data-mono-sm input-text"
-                          />
-                          <span className="micro-text text-slate-500 mt-1 block font-body">
-                            Used automatically whenever Ollama is offline or when cloud high-speed reasoning is needed.
-                          </span>
-                        </div>
-
-                        <div>
-                          <label className="input-label block font-semibold text-slate-700 mb-1 font-body">
-                            Google Gemini Model
-                          </label>
-                          <input
-                            type="text"
-                            value={geminiModel}
-                            onChange={(e) => setGeminiModel(e.target.value)}
-                            placeholder="gemini-3.5-flash"
-                            className="w-full bg-white border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-mono focus:outline-none focus:border-[#1E5FBF] data-mono-sm input-text"
-                          />
-                          <span className="micro-text text-slate-400 mt-0.5 block font-body">
-                            Standard verified model: <code className="data-mono-sm font-mono bg-white px-1 py-0.5 rounded border border-slate-200">gemini-3.5-flash</code>
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Section 2: Ollama (Local Daemon) */}
-                      <div className="p-3.5 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE] space-y-3">
-                        <span className="font-semibold text-[#0B2545] block font-body">
-                          Ollama Daemon Configuration (Local or Hosted)
-                        </span>
-
-                        <div>
-                          <label className="input-label block font-semibold text-slate-700 mb-1 font-body">
-                            Ollama Base URL / Endpoint
-                          </label>
-                          <input
-                            type="text"
-                            value={ollamaBaseUrl}
-                            onChange={(e) => setOllamaBaseUrl(e.target.value)}
-                            placeholder="http://localhost:11434"
-                            className="w-full bg-white border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-mono focus:outline-none focus:border-[#1E5FBF] data-mono-sm input-text"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="input-label font-semibold text-slate-700 flex items-center gap-1 font-body">
-                              <Key className="w-3.5 h-3.5 text-slate-500" />
-                              <span>Ollama Bearer Token (Optional)</span>
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => setShowApiKey(!showApiKey)}
-                              className="micro-text text-purple-700 font-semibold hover:underline cursor-pointer flex items-center gap-1 font-body"
-                            >
-                              {showApiKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                              <span>{showApiKey ? "Hide Key" : "Show Key"}</span>
-                            </button>
-                          </div>
-                          <input
-                            type={showApiKey ? "text" : "password"}
-                            value={ollamaApiKey}
-                            onChange={(e) => setOllamaApiKey(e.target.value)}
-                            placeholder="Optional for local localhost:11434"
-                            className="w-full bg-white border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-mono focus:outline-none focus:border-[#1E5FBF] data-mono-sm input-text"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="input-label block font-semibold text-slate-700 mb-1 font-body">
-                            Ollama LLM Model
-                          </label>
-                          <select
-                            value={ollamaModel}
-                            onChange={(e) => setOllamaModel(e.target.value)}
-                            className="w-full bg-white border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold cursor-pointer font-body input-text"
-                          >
-                            <option value="gemma3">gemma3 (Recommended Google DeepMind lightweight)</option>
-                            <option value="llama3">llama3 / llama3.1 (Meta 8B instruction tuned)</option>
-                            <option value="mistral">mistral (Mistral AI 7B)</option>
-                            <option value="qwen2.5">qwen2.5 (Alibaba Qwen)</option>
-                            <option value="deepseek-r1">deepseek-r1 (Reasoning model)</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Info Banner */}
-                      <div className="p-3 rounded-xl bg-purple-50/70 border border-purple-200/80 micro-text text-purple-900 leading-relaxed font-body">
-                        <span className="font-semibold">Automatic Failover Strategy: </span>
-                        The Sahayya maritime intelligence engine prioritizes local Ollama. If Ollama is offline, it immediately routes all 30 vessels kinematic analysis and chat interrogation through Google AI (Gemini 3.5 Flash). If both are unavailable, the embedded Coast Guard heuristic rules engine produces uninterrupted forensic assessments.
-                      </div>
-
-                      <div className="pt-2 flex items-center justify-end gap-3 font-body">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOllamaBaseUrl("http://localhost:11434");
-                            setOllamaModel("gemma3");
-                            setOllamaApiKey("");
-                            setGoogleApiKey(import.meta.env.VITE_GOOGLE_API_KEY || "");
-                            setGeminiModel("gemini-3.5-flash");
-                            triggerToast("Reset AI settings to system defaults.");
-                          }}
-                          className="px-4 py-2 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50 btn-text cursor-pointer"
-                        >
-                          Reset Defaults
-                        </button>
-                        <button
-                          type="submit"
-                          className="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white btn-text flex items-center gap-1.5 shadow-md shadow-purple-900/20 cursor-pointer"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          <span>Save Configuration</span>
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
-
-                {/* TAB 4: Language & Accessibility */}
-                {activeTab === "accessibility" && (
-                  <div className="space-y-6 max-w-xl animate-fadeIn">
-                    <div>
-                      <h2 className="heading-secondary text-[#0B2545]">Language &amp; Accessibility</h2>
-                      <p className="body-text text-xs text-slate-500 mt-0.5 font-body">
-                        Flowchart mandated multilingual support and adaptive accessibility controls.
-                      </p>
-                    </div>
-
-                    <div className="space-y-4 text-xs font-body">
-                      <div>
-                        <label className="input-label block font-semibold text-slate-700 mb-1 font-body">Interface Language</label>
-                        <select
-                          value={selectedLanguage}
-                          onChange={(e) => {
-                            setSelectedLanguage(e.target.value);
-                            triggerToast(`Locale updated to: ${e.target.value.toUpperCase()}`);
-                          }}
-                          className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold font-body input-text"
-                        >
-                          <option value="en">English (Official Operations)</option>
-                          <option value="hi">हिन्दी (Hindi)</option>
-                          <option value="ta">தமிழ் (Tamil)</option>
-                          <option value="te">తెలుగు (Telugu)</option>
-                          <option value="mr">मराठी (Marathi - West Coast)</option>
-                          <option value="gu">ગુજરાતી (Gujarati - West Coast)</option>
-                        </select>
-                      </div>
-
-                      <div className="space-y-2.5 pt-2">
-                        <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-[0.06em]">
-                          Visual &amp; Ergonomic Accessibility
-                        </h3>
-
-                        {[
-                          {
-                            key: "highContrast",
-                            label: "High Contrast Mode",
-                            desc: "Maximum distinction for outdoor bridge display screens",
-                            val: highContrast,
-                            setter: setHighContrast,
-                          },
-                          {
-                            key: "largeText",
-                            label: "Enlarged Maritime Typography",
-                            desc: "Increases baseline font sizes for emergency operations centers",
-                            val: largeText,
-                            setter: setLargeText,
-                          },
-                          {
-                            key: "reducedMotion",
-                            label: "Reduced Motion Mode",
-                            desc: "Disables pulsing halos and particle flow animations",
-                            val: reducedMotion,
-                            setter: setReducedMotion,
-                          },
-                        ].map((acc) => (
+                    {/* Sensor Cards List */}
+                    <div className="space-y-3">
+                      {sensorsList.map((s) => {
+                        const isResyncing = resyncingId === s.id;
+                        return (
                           <div
-                            key={acc.key}
-                            className="p-3 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE] flex items-center justify-between"
+                            key={s.id}
+                            className="p-4 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs hover:shadow-xs transition-shadow"
                           >
                             <div>
-                              <div className="font-semibold text-[#0B2545] font-body text-xs">{acc.label}</div>
-                              <div className="micro-text text-slate-500 font-body">{acc.desc}</div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-xs text-[#0B2545] font-display">{s.name}</span>
+                                <span className={`badge-text px-2 py-0.2 rounded-full border text-[9.5px] font-bold ${s.statusColor}`}>
+                                  ● {s.status}
+                                </span>
+                              </div>
+                              <div className="micro-text text-slate-600 mt-0.5">{s.type}</div>
+                              <div className="data-mono-sm text-slate-500 font-mono text-[10.5px] mt-1 flex items-center gap-3 flex-wrap">
+                                <span>Sync: <strong>{s.lastSync}</strong></span>
+                                <span>&bull;</span>
+                                <span>Latency: <strong>{s.latency}</strong></span>
+                                <span>&bull;</span>
+                                <span>Throughput: <strong>{s.throughput}</strong></span>
+                                <span>&bull;</span>
+                                <span className="text-emerald-700 font-semibold">{s.encryption}</span>
+                              </div>
                             </div>
-                            <input
-                              type="checkbox"
-                              checked={acc.val}
-                              onChange={(e) => {
-                                acc.setter(e.target.checked);
-                                triggerToast(`${acc.label}: ${e.target.checked ? "Enabled" : "Disabled"}`);
-                              }}
-                              className="rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
-                            />
+
+                            <button
+                              type="button"
+                              onClick={() => handleResyncSensor(s.id, s.name)}
+                              disabled={isResyncing}
+                              className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-[#0B2545] text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer self-start sm:self-center disabled:opacity-50"
+                              title="Force fresh handshake and cache invalidation"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 text-[#1E5FBF] ${isResyncing ? "animate-spin" : ""}`} />
+                              <span>{isResyncing ? "Resyncing..." : "Force Resync"}</span>
+                            </button>
                           </div>
-                        ))}
+                        );
+                      })}
+                    </div>
+
+                    {/* OceanShield AI Browser Extension Card */}
+                    <div className="p-4 rounded-xl border-2 border-sky-300 bg-gradient-to-r from-sky-50 to-indigo-50/60 shadow-xs">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-xl bg-[#1E5FBF] text-white flex items-center justify-center shadow-xs">
+                            <Sparkles className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="heading-section text-xs font-bold text-[#0B2545] font-display">
+                              OceanShield AI Browser Extension Integration (Stage 3)
+                            </h3>
+                            <div className="data-mono-sm text-slate-500 font-mono text-[10.5px]">
+                              Chrome / Edge Secure Extension &bull; v1.4.2 Verified
+                            </div>
+                          </div>
+                        </div>
+
+                        <span className="badge-text px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+                          Active Handshake
+                        </span>
+                      </div>
+
+                      <p className="body-text text-xs text-slate-600 mt-2.5 leading-relaxed">
+                        Enables seamless one-click SAR Geotiff upload, AIS route extraction, suspect vessel dossiers, and instant court-admissible PDF compilation directly from external maritime and port VTS consoles.
+                      </p>
+
+                      <div className="mt-3 pt-3 border-t border-sky-200/80 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-700">Encrypted Transport:</span>
+                          <span className="text-xs font-semibold text-emerald-600">TLS 1.3 WebSockets</span>
+                        </div>
+
+                        <button
+                          onClick={() => triggerToast("OceanShield AI extension package verified and ready.")}
+                          className="px-3.5 py-1.5 rounded-lg bg-[#0B2545] hover:bg-[#1E5FBF] text-white btn-text flex items-center gap-1.5 transition-colors cursor-pointer text-xs font-semibold"
+                        >
+                          <span>Extension Console</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* TAB 5: User & Role Management */}
+                {/* ========================================================= */}
+                {/* TAB 4: Security, Encryption & Audit Vault                 */}
+                {/* ========================================================= */}
+                {activeTab === "security" && (
+                  <div className="space-y-6 max-w-3xl animate-fadeIn font-body">
+                    <div>
+                      <h2 className="heading-secondary text-base sm:text-lg font-bold text-[#0B2545] font-display">
+                        Security Clearance &amp; Cryptographic Evidence Vault
+                      </h2>
+                      <p className="body-text text-xs text-slate-500 mt-0.5 font-body">
+                        Hardware 2FA authentication, evidence hash verification, and statutory tamper-proof activity audit logs.
+                      </p>
+                    </div>
+
+                    {/* Security Metrics Overview */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="p-3.5 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE]">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Clearance Tier
+                        </div>
+                        <div className="text-sm font-bold text-[#0B2545] font-display mt-0.5">
+                          Level-4 (Command Authority)
+                        </div>
+                        <div className="text-[10px] text-emerald-600 font-semibold mt-1 flex items-center gap-1">
+                          <Shield className="w-3 h-3" />
+                          <span>Admissible for MARPOL Proceedings</span>
+                        </div>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE]">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Cryptographic Digest
+                        </div>
+                        <div className="text-sm font-bold text-[#1E5FBF] font-display mt-0.5">
+                          SHA-256 Tamper-Proof
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono mt-1">
+                          Auto-anchored on report export
+                        </div>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl border border-[#E1EEF9] bg-[#F8FBFE]">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Two-Factor Auth (2FA)
+                        </div>
+                        <div className="text-sm font-bold text-emerald-700 font-display mt-0.5 flex items-center gap-1.5">
+                          <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Hardware TOTP Enforced</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-1">
+                          Gov Authenticator Active
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Session Security Settings */}
+                    <div className="p-4 rounded-xl border border-[#E1EEF9] bg-white space-y-3">
+                      <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-wider">
+                        Operational Session Controls
+                      </h3>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <label className="input-label block font-semibold text-slate-700 mb-1">
+                            Inactivity Auto-Lock Timeout
+                          </label>
+                          <select
+                            value={autoSessionTimeout}
+                            onChange={(e) => {
+                              setAutoSessionTimeout(e.target.value);
+                              triggerToast(`Session auto-lock updated to ${e.target.value} minutes.`);
+                            }}
+                            className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2 font-semibold font-body input-text"
+                          >
+                            <option value="15">15 Minutes (High Security Bridge)</option>
+                            <option value="30">30 Minutes (Recommended)</option>
+                            <option value="60">60 Minutes (Command Center)</option>
+                          </select>
+                        </div>
+
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9] self-end">
+                          <div>
+                            <span className="font-semibold text-slate-800 block">Enforce 2FA on PDF Export</span>
+                            <span className="micro-text text-slate-500">Require fingerprint / token for official brief download</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={twoFactorEnabled}
+                            onChange={(e) => setTwoFactorEnabled(e.target.checked)}
+                            className="w-4 h-4 rounded text-[#1E5FBF] focus:ring-0 cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Operational Session Audit Log */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-wider">
+                          Recent Command &amp; Evidence Audit Log
+                        </h3>
+                        <span className="text-[10px] font-mono text-slate-400">Statutory 7-Year Retention</span>
+                      </div>
+
+                      <div className="border border-[#E1EEF9] rounded-xl overflow-hidden bg-white shadow-2xs">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-[#F8FBFE] border-b border-[#E1EEF9] text-slate-500 text-[10px] uppercase tracking-wider">
+                              <th className="p-2.5 font-semibold">Action / Event</th>
+                              <th className="p-2.5 font-semibold">Operator</th>
+                              <th className="p-2.5 font-semibold">IP Address &amp; Location</th>
+                              <th className="p-2.5 font-semibold">Timestamp</th>
+                              <th className="p-2.5 font-semibold">Integrity</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-body">
+                            {auditLogs.map((log) => (
+                              <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="p-2.5 font-semibold text-[#0B2545]">{log.action}</td>
+                                <td className="p-2.5 text-slate-700">{log.user}</td>
+                                <td className="p-2.5 font-mono text-[10.5px] text-slate-500">
+                                  {log.ip} ({log.location})
+                                </td>
+                                <td className="p-2.5 text-slate-500 font-mono text-[10.5px]">{log.time}</td>
+                                <td className="p-2.5">
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9.5px] font-bold">
+                                    {log.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ========================================================= */}
+                {/* TAB 5: User & Role-Based Governance                       */}
+                {/* ========================================================= */}
                 {activeTab === "users" && (
-                  <div className="space-y-6 animate-fadeIn">
-                    <div className="flex items-center justify-between">
+                  <div className="space-y-6 animate-fadeIn font-body">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
-                        <h2 className="heading-secondary text-[#0B2545]">User &amp; Access Governance</h2>
+                        <h2 className="heading-secondary text-base sm:text-lg font-bold text-[#0B2545] font-display">
+                          User &amp; Access Governance (RBAC)
+                        </h2>
                         <p className="body-text text-xs text-slate-500 mt-0.5 font-body">
-                          Role-based permissions for incident commanding, evidence export, and vessel attribution.
+                          Authorized officers, role-based capabilities, and maritime legal signing privileges.
                         </p>
                       </div>
                       <button
                         onClick={() => setShowInviteModal(true)}
-                        className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] text-white btn-text flex items-center gap-1.5 shadow-sm cursor-pointer font-body"
+                        className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] text-white btn-text flex items-center gap-1.5 shadow-sm hover:shadow-md transition-all cursor-pointer font-body text-xs font-semibold self-start sm:self-auto"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Invite Officer</span>
+                        <span>Invite Operations Officer</span>
                       </button>
                     </div>
 
                     {/* Users Table */}
-                    <div className="border border-[#E1EEF9] rounded-xl overflow-hidden bg-white">
+                    <div className="border border-[#E1EEF9] rounded-xl overflow-hidden bg-white shadow-2xs">
                       <table className="w-full text-left border-collapse">
                         <thead>
-                          <tr className="table-header bg-[#F8FBFE] border-b border-[#E1EEF9] text-slate-500 uppercase tracking-wider text-[10px]">
+                          <tr className="bg-[#F8FBFE] border-b border-[#E1EEF9] text-slate-500 uppercase tracking-wider text-[10px]">
                             <th className="p-3 font-semibold">Name &amp; Agency</th>
                             <th className="p-3 font-semibold">Role Designation</th>
                             <th className="p-3 font-semibold">Gov Email</th>
+                            <th className="p-3 font-semibold">Clearance</th>
                             <th className="p-3 font-semibold">Status</th>
                           </tr>
                         </thead>
-                        <tbody className="table-body divide-y divide-slate-100 text-xs font-body">
+                        <tbody className="divide-y divide-slate-100 text-xs font-body">
                           {teamMembers.map((m) => (
                             <tr key={m.id} className="hover:bg-slate-50/80 transition-colors">
                               <td className="p-3 font-semibold text-[#0B2545]">
                                 <div>{m.name}</div>
                                 <div className="micro-text text-slate-400 font-normal">{m.agency}</div>
                               </td>
-                              <td className="p-3 font-medium text-slate-700 font-body">{m.role}</td>
-                              <td className="p-3 data-mono-sm font-mono text-slate-600">{m.email}</td>
+                              <td className="p-3 font-medium text-slate-700">{m.role}</td>
+                              <td className="p-3 data-mono-sm font-mono text-slate-600 text-[11px]">{m.email}</td>
+                              <td className="p-3 font-mono text-[10.5px] text-slate-600">{m.clearance}</td>
                               <td className="p-3">
                                 <span
-                                  className={`badge-text px-2 py-0.5 rounded-full border ${
+                                  className={`badge-text px-2 py-0.5 rounded-full border text-[9.5px] font-bold ${
                                     m.status === "Active"
                                       ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                       : "bg-amber-50 text-amber-700 border-amber-200"
@@ -1264,23 +1312,157 @@ export const SettingsPage: React.FC = () => {
 
                     {/* Permissions Legend */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-body">
-                      <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                        <div className="heading-section text-xs text-[#0B2545]">Viewer (Read-Only)</div>
-                        <p className="micro-text text-slate-500 mt-0.5 font-body">
-                          Can view live AIS feeds, incident dossiers, and sensor layers.
+                      <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                        <div className="font-bold text-xs text-[#0B2545] font-display">Viewer (Read-Only)</div>
+                        <p className="micro-text text-slate-500 mt-1">
+                          Can view live AIS feeds, incident map overlays, and telemetry metrics without modification rights.
                         </p>
                       </div>
-                      <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                        <div className="heading-section text-xs text-[#0B2545]">Senior Analyst</div>
-                        <p className="micro-text text-slate-500 mt-0.5 font-body">
-                          Full access to Counterfactual Lab, What-If simulator, and forensic scoring.
+                      <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                        <div className="font-bold text-xs text-[#0B2545] font-display">Senior Analyst</div>
+                        <p className="micro-text text-slate-500 mt-1">
+                          Full access to What-If Hydrodynamic simulator, forensic reverse drift calculations, and suspect scoring.
                         </p>
                       </div>
-                      <div className="p-3 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
-                        <div className="heading-section text-xs text-[#0B2545]">Incident Commander</div>
-                        <p className="micro-text text-slate-500 mt-0.5 font-body">
-                          Authorized to deploy assets, issue NAVTEX alerts, and sign court evidence.
+                      <div className="p-3.5 rounded-xl bg-[#F8FBFE] border border-[#E1EEF9]">
+                        <div className="font-bold text-xs text-[#0B2545] font-display">Incident Commander</div>
+                        <p className="micro-text text-slate-500 mt-1">
+                          Authorized to mobilize tactical assets, issue multi-channel NAVTEX alerts, and sign MARPOL court evidence.
                         </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ========================================================= */}
+                {/* TAB 6: Locale & Bridge Ergonomics                         */}
+                {/* ========================================================= */}
+                {activeTab === "accessibility" && (
+                  <div className="space-y-6 max-w-xl animate-fadeIn font-body">
+                    <div>
+                      <h2 className="heading-secondary text-base sm:text-lg font-bold text-[#0B2545] font-display">
+                        {t("settings.localeErgonomics", "Locale & Operational Ergonomics")}
+                      </h2>
+                      <p className="body-text text-xs text-slate-500 mt-0.5 font-body">
+                        Regional multilingual language support and night/bridge adaptive ergonomic display controls.
+                      </p>
+                    </div>
+
+                    <div className="space-y-4 text-xs font-body">
+                      <div>
+                        <label className="input-label block font-semibold text-slate-700 mb-1">
+                          {t("settings.primaryLang", "Command Center Primary Language")}
+                        </label>
+                        <select
+                          value={language}
+                          onChange={(e) => {
+                            const newLang = e.target.value as LanguageCode;
+                            setLanguage(newLang);
+                            triggerToast(`Operational language set to: ${newLang.toUpperCase()}`);
+                          }}
+                          className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 text-xs text-[#0B2545] font-semibold font-body input-text cursor-pointer"
+                        >
+                          <option value="en">English (Official Maritime Communications)</option>
+                          <option value="hi">हिन्दी (Hindi - National Operational)</option>
+                          <option value="mr">मराठी (Marathi - West Coast Command)</option>
+                          <option value="gu">ગુજરાતી (Gujarati - North-West Sector)</option>
+                          <option value="ta">தமிழ் (Tamil - East Coast &amp; Palk Strait)</option>
+                          <option value="te">తెలుగు (Telugu - Bay of Bengal Sector)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="input-label block font-semibold text-slate-700 mb-1">
+                          {t("settings.coordFormat", "GIS Coordinate Display Format")}
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCoordFormat("dd");
+                              triggerToast("Coordinate display: Decimal Degrees (18.9997°N, 72.5502°E)");
+                            }}
+                            className={`p-2.5 rounded-xl border text-xs font-semibold cursor-pointer ${
+                              coordFormat === "dd"
+                                ? "bg-[#0B2545] text-white border-[#0B2545]"
+                                : "bg-[#F8FBFE] text-slate-700 border-[#E1EEF9]"
+                            }`}
+                          >
+                            Decimal Degrees (DD)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCoordFormat("dms");
+                              triggerToast("Coordinate display: Degrees Minutes Seconds (18°59'59\"N 72°33'00\"E)");
+                            }}
+                            className={`p-2.5 rounded-xl border text-xs font-semibold cursor-pointer ${
+                              coordFormat === "dms"
+                                ? "bg-[#0B2545] text-white border-[#0B2545]"
+                                : "bg-[#F8FBFE] text-slate-700 border-[#E1EEF9]"
+                            }`}
+                          >
+                            Degrees Mins Secs (DMS)
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2.5 pt-2">
+                        <h3 className="font-display font-semibold text-xs text-slate-700 uppercase tracking-wider">
+                          {t("settings.tacticalDisplay", "Tactical Display Controls")}
+                        </h3>
+
+                        {[
+                          {
+                            key: "soundAlerts",
+                            label: t("settings.soundChime", "Audible Chime on Critical Discharge"),
+                            desc: "Sounds audible chime when new satellite detection severity exceeds threshold",
+                            val: soundAlerts,
+                            setter: setSoundAlerts,
+                          },
+                          {
+                            key: "highContrast",
+                            label: t("settings.highContrast", "High Contrast Bridge Screen Mode"),
+                            desc: "Maximum visual distinction for bridge and outdoor display terminals",
+                            val: highContrast,
+                            setter: setHighContrast,
+                          },
+                          {
+                            key: "largeText",
+                            label: t("settings.largeText", "Enlarged Maritime Typography"),
+                            desc: "Increases baseline label sizing for emergency operations rooms",
+                            val: largeText,
+                            setter: setLargeText,
+                          },
+                          {
+                            key: "reducedMotion",
+                            label: t("settings.reducedMotion", "Reduced Motion Mode"),
+                            desc: "Disables pulsing radar sweeps and particle drift flows",
+                            val: reducedMotion,
+                            setter: setReducedMotion,
+                          },
+                        ].map((item) => (
+                          <div
+                            key={item.key}
+                            onClick={() => item.setter(!item.val)}
+                            className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-colors ${
+                              item.val
+                                ? "bg-sky-50/70 border-sky-300"
+                                : "bg-[#F8FBFE] border-[#E1EEF9] hover:bg-slate-50"
+                            }`}
+                          >
+                            <div>
+                              <div className="font-semibold text-slate-800 text-xs">{item.label}</div>
+                              <div className="micro-text text-slate-500 mt-0.5">{item.desc}</div>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={item.val}
+                              onChange={(e) => item.setter(e.target.checked)}
+                              className="w-4 h-4 rounded text-[#1E5FBF] focus:ring-0 cursor-pointer pointer-events-none"
+                            />
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -1296,14 +1478,21 @@ export const SettingsPage: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-body">
           <form
             onSubmit={handleInviteUser}
-            className="w-full max-w-md bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-5 text-slate-800 space-y-4"
+            className="w-full max-w-md bg-white border border-[#E1EEF9] rounded-2xl shadow-2xl p-6 text-slate-800 space-y-4"
           >
-            <div className="flex items-center justify-between border-b border-[#E1EEF9] pb-2">
-              <h3 className="heading-section text-sm text-[#0B2545]">Invite Maritime Operations Officer</h3>
+            <div className="flex items-center justify-between border-b border-[#E1EEF9] pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-sky-50 text-[#1E5FBF] flex items-center justify-center">
+                  <User className="w-4 h-4" />
+                </div>
+                <h3 className="heading-section text-sm font-bold text-[#0B2545] font-display">
+                  Invite Operations Officer
+                </h3>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowInviteModal(false)}
-                className="text-slate-400 hover:text-slate-700"
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
                 ✕
               </button>
@@ -1311,57 +1500,80 @@ export const SettingsPage: React.FC = () => {
 
             <div className="space-y-3 text-xs font-body">
               <div>
-                <label className="input-label block text-slate-700 mb-1 font-body">Officer Name</label>
+                <label className="input-label block font-semibold text-slate-700 mb-1">
+                  Officer Full Name
+                </label>
                 <input
                   type="text"
                   required
                   value={inviteName}
                   onChange={(e) => setInviteName(e.target.value)}
                   placeholder="e.g. Lt. Cdr. V. Joshi"
-                  className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2 font-semibold input-text font-body"
+                  className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 font-semibold input-text font-body text-xs"
                 />
               </div>
 
               <div>
-                <label className="input-label block text-slate-700 mb-1 font-body">Government / Agency Email</label>
+                <label className="input-label block font-semibold text-slate-700 mb-1">
+                  Government Service Email
+                </label>
                 <input
                   type="email"
                   required
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
                   placeholder="name@agency.gov.in"
-                  className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2 font-semibold input-text font-body"
+                  className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 font-semibold input-text font-body text-xs"
                 />
               </div>
 
               <div>
-                <label className="input-label block text-slate-700 mb-1 font-body">Role Designation</label>
+                <label className="input-label block font-semibold text-slate-700 mb-1">
+                  Command Agency / Wing
+                </label>
+                <select
+                  value={inviteAgency}
+                  onChange={(e) => setInviteAgency(e.target.value)}
+                  className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 font-semibold input-text font-body text-xs"
+                >
+                  <option value="Indian Coast Guard (West HQ)">Indian Coast Guard (West HQ)</option>
+                  <option value="Port Authority / VTS Directorate">Port Authority / VTS Directorate</option>
+                  <option value="State Pollution Control Board">State Pollution Control Board (SPCB)</option>
+                  <option value="DG Shipping Mumbai">DG Shipping Mumbai</option>
+                  <option value="INCOIS Hyderabad">INCOIS Hyderabad</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="input-label block font-semibold text-slate-700 mb-1">
+                  Operational Clearance Role
+                </label>
                 <select
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value)}
-                  className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2 font-semibold input-text font-body"
+                  className="w-full bg-[#F8FBFE] border border-[#E1EEF9] rounded-xl p-2.5 font-semibold input-text font-body text-xs"
                 >
-                  <option value="Senior Analyst">Senior Analyst</option>
-                  <option value="Incident Commander">Incident Commander</option>
-                  <option value="Viewer (Read-Only)">Viewer (Read-Only)</option>
-                  <option value="VTS Specialist">VTS Specialist</option>
+                  <option value="Senior Analyst">Senior Analyst (Forensic Lab &amp; What-If Simulation)</option>
+                  <option value="Incident Commander">Incident Commander (Full Tactical Dispatch)</option>
+                  <option value="VTS Specialist">VTS Specialist (Vessel Track Attribution)</option>
+                  <option value="Viewer (Read-Only)">Viewer (Surveillance Read-Only)</option>
                 </select>
               </div>
             </div>
 
-            <div className="pt-2 flex justify-end gap-2 font-body">
+            <div className="pt-2 flex justify-end gap-2.5 font-body">
               <button
                 type="button"
                 onClick={() => setShowInviteModal(false)}
-                className="px-3 py-1.5 rounded-xl border border-[#E1EEF9] btn-text text-slate-600"
+                className="px-4 py-2 rounded-xl border border-[#E1EEF9] btn-text text-slate-600 hover:bg-slate-50 cursor-pointer text-xs font-semibold"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-4 py-1.5 rounded-xl bg-[#1E5FBF] hover:bg-[#174EA6] text-white btn-text"
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#1E5FBF] to-[#2E8FE8] text-white btn-text shadow-sm hover:shadow-md cursor-pointer text-xs font-bold"
               >
-                Send Official Invite
+                Dispatch Official Invite
               </button>
             </div>
           </form>
@@ -1372,11 +1584,10 @@ export const SettingsPage: React.FC = () => {
       <ReportGenerationModal
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
-        incidentTitle="Sahayya Maritime Domain Settings & Audit Dossier"
-        isFleetReport={true}
+        stage="settings"
+        incidentIdOrCode="SYS-AUD-2026"
+        incidentTitle="Sahayya Maritime Domain Settings &amp; Audit Dossier"
       />
     </div>
   );
 };
-
-export default SettingsPage;

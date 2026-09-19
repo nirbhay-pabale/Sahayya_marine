@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -12,10 +12,13 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-// Fix Leaflet default marker icon resolution with bundlers
-import iconUrl from "leaflet/dist/images/marker-icon.png";
-import iconRetinaUrl from "leaflet/dist/images/marker-icon-2x.png";
-import shadowUrl from "leaflet/dist/images/marker-shadow.png";
+// Configure default icon fallback
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
+  iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+});
 
 import {
   Layers,
@@ -32,22 +35,28 @@ import {
   ChevronDown,
   Anchor,
   Flag,
+  Droplets,
+  Ruler,
 } from "lucide-react";
 import { PortSelector } from "./PortSelector";
 import { INDIAN_PORTS, IndianPort } from "../data/indianPorts";
 import { INCIDENT_DATA } from "../data/incidentData";
+import {
+  simulateOilSpillHydrodynamics,
+  HydrodynamicSimulationResult,
+} from "../utils/spillHydrodynamics";
 
-// Configure default icon fallback
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconUrl,
-  iconRetinaUrl,
-  shadowUrl,
-});
+// Memoized DivIcon Caches for MapPanel
+const panelPortIconCache = new Map<string, L.DivIcon>();
+const panelVesselIconCache = new Map<string, L.DivIcon>();
 
-// Custom Anchor DivIcon for Indian Ports
-const createPortIcon = (isSelected: boolean) =>
-  L.divIcon({
+// Custom Anchor DivIcon for Indian Ports with Caching
+const createPortIcon = (isSelected: boolean) => {
+  const key = isSelected ? "sel" : "norm";
+  if (panelPortIconCache.has(key)) {
+    return panelPortIconCache.get(key)!;
+  }
+  const icon = L.divIcon({
     className: "custom-port-marker",
     html: `
       <div style="
@@ -74,10 +83,18 @@ const createPortIcon = (isSelected: boolean) =>
     iconAnchor: [isSelected ? 17 : 14, isSelected ? 17 : 14],
     popupAnchor: [0, -16],
   });
+  panelPortIconCache.set(key, icon);
+  return icon;
+};
 
-// Custom Vessel DivIcon
-const createVesselIcon = (isSuspect: boolean, heading: number = 312) =>
-  L.divIcon({
+// Custom Vessel DivIcon with Caching
+const createVesselIcon = (isSuspect: boolean, heading: number = 312) => {
+  const roundedHeading = Math.round(heading / 5) * 5;
+  const key = `${isSuspect ? 1 : 0}_${roundedHeading}`;
+  if (panelVesselIconCache.has(key)) {
+    return panelVesselIconCache.get(key)!;
+  }
+  const icon = L.divIcon({
     className: "custom-vessel-marker",
     html: `
       <div style="position: relative; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
@@ -96,7 +113,7 @@ const createVesselIcon = (isSuspect: boolean, heading: number = 312) =>
           display: flex;
           align-items: center;
           justify-content: center;
-          transform: rotate(${heading}deg);
+          transform: rotate(${roundedHeading}deg);
         ">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="white">
             <polygon points="12,2 22,22 12,17 2,22" />
@@ -108,12 +125,15 @@ const createVesselIcon = (isSuspect: boolean, heading: number = 312) =>
     iconAnchor: [16, 16],
     popupAnchor: [0, -14],
   });
+  panelVesselIconCache.set(key, icon);
+  return icon;
+};
 
 // Incident Constants
 const INCIDENT_CENTER: [number, number] = [18.9997, 72.5502];
 const DEFAULT_ZOOM = 9;
 
-// Child controller component to access Map instance and handle resizing/zoom
+// Child controller component to access Map instance and handle debounced resizing/zoom
 const MapController: React.FC<{
   targetCoords: [number, number] | null;
   targetZoom: number;
@@ -121,55 +141,53 @@ const MapController: React.FC<{
   onMapInstance?: (map: L.Map) => void;
 }> = ({ targetCoords, targetZoom, mapMode, onMapInstance }) => {
   const map = useMap();
+  const lastTargetRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (onMapInstance) onMapInstance(map);
 
-    // Immediate and staggered size invalidations for robust container mounting
-    map.invalidateSize();
-    const timers = [50, 150, 350, 750, 1500].map((delay) =>
-      setTimeout(() => {
-        map.invalidateSize();
-      }, delay)
-    );
+    let rAFId: number | null = null;
+    let lastWidth = 0;
+    let lastHeight = 0;
 
-    // Window resize event handler
-    const handleResize = () => {
-      map.invalidateSize();
+    const handleDebouncedResize = () => {
+      if (rAFId) cancelAnimationFrame(rAFId);
+      rAFId = requestAnimationFrame(() => {
+        const container = map.getContainer();
+        if (container) {
+          const { clientWidth, clientHeight } = container;
+          if (Math.abs(clientWidth - lastWidth) > 3 || Math.abs(clientHeight - lastHeight) > 3) {
+            lastWidth = clientWidth;
+            lastHeight = clientHeight;
+            if (!(map as any)._animatingZoom && !(map as any)._moving) {
+              map.invalidateSize({ debounceMoveend: true });
+            }
+          }
+        }
+      });
     };
-    window.addEventListener("resize", handleResize);
 
-    // Scroll event listener on parent scrollable container
     const container = map.getContainer();
-    const scrollParent = container?.closest("main");
-    const handleScroll = () => {
-      map.invalidateSize();
-    };
-    if (scrollParent) {
-      scrollParent.addEventListener("scroll", handleScroll, { passive: true });
-    }
-
-    // ResizeObserver on the map container, parent, and scrollParent
     let resizeObserver: ResizeObserver | null = null;
     if (typeof ResizeObserver !== "undefined" && container) {
-      resizeObserver = new ResizeObserver(() => {
-        map.invalidateSize();
-      });
+      lastWidth = container.clientWidth;
+      lastHeight = container.clientHeight;
+      resizeObserver = new ResizeObserver(handleDebouncedResize);
       resizeObserver.observe(container);
-      if (container.parentElement) {
-        resizeObserver.observe(container.parentElement);
-      }
-      if (scrollParent) {
-        resizeObserver.observe(scrollParent);
-      }
     }
 
-    return () => {
-      timers.forEach((t) => clearTimeout(t));
-      window.removeEventListener("resize", handleResize);
-      if (scrollParent) {
-        scrollParent.removeEventListener("scroll", handleScroll);
+    window.addEventListener("resize", handleDebouncedResize);
+
+    const timer = setTimeout(() => {
+      if (!(map as any)._animatingZoom) {
+        map.invalidateSize();
       }
+    }, 150);
+
+    return () => {
+      if (rAFId) cancelAnimationFrame(rAFId);
+      clearTimeout(timer);
+      window.removeEventListener("resize", handleDebouncedResize);
       if (resizeObserver) {
         resizeObserver.disconnect();
       }
@@ -178,19 +196,25 @@ const MapController: React.FC<{
 
   // Invalidate size on mapMode toggle
   useEffect(() => {
-    map.invalidateSize();
     const t = setTimeout(() => {
-      map.invalidateSize();
-    }, 80);
+      if (!(map as any)._animatingZoom) {
+        map.invalidateSize();
+      }
+    }, 50);
     return () => clearTimeout(t);
   }, [mapMode, map]);
 
   useEffect(() => {
     if (targetCoords) {
-      map.flyTo(targetCoords, targetZoom, {
-        duration: 1.5,
-        easeLinearity: 0.25,
-      });
+      const key = `${targetCoords[0].toFixed(4)},${targetCoords[1].toFixed(4)},${targetZoom}`;
+      if (lastTargetRef.current !== key) {
+        lastTargetRef.current = key;
+        map.flyTo(targetCoords, targetZoom, {
+          duration: 0.9,
+          easeLinearity: 0.25,
+          noMoveStart: true,
+        });
+      }
     }
   }, [targetCoords, targetZoom, map]);
 
@@ -283,36 +307,29 @@ export const MapPanel: React.FC<MapPanelProps> = ({
     return hash + 4;
   };
 
-  // Coordinates for Incident Polygons & Tracks
-  const oilSlickPolygon: [number, number][] = [
-    [19.04, 72.51],
-    [19.08, 72.58],
-    [19.02, 72.63],
-    [18.96, 72.60],
-    [18.94, 72.54],
-    [18.98, 72.48],
-  ];
+  // Dynamic Hydrodynamic Oil Slick Simulation (Realistic multi-layer footprint)
+  const hydroSim = useMemo<HydrodynamicSimulationResult>(() => {
+    return simulateOilSpillHydrodynamics({
+      centroid: INCIDENT_CENTER,
+      windSpeedKts: 10.0,
+      windDirDeg: 289,
+      currentSpeedKts: 1.3,
+      currentDirDeg: 189,
+      releaseOffsetHours: -18.0,
+      releaseVolumeM3: 18000,
+      containmentEffPct: 35,
+      chemicalDispersant: true,
+      responseDelayHours: 3.0,
+      turbulentDiffusion: 12.0,
+    });
+  }, []);
 
-  const probableOriginCenter: [number, number] = [18.78, 72.51];
-
+  const probableOriginCenter: [number, number] = hydroSim.probableOrigin;
   const hindcastTrackCoords: [number, number][] = [
-    [18.78, 72.51],
+    hydroSim.probableOrigin,
     [18.84, 72.53],
     [18.91, 72.54],
-    [18.9997, 72.5502],
-  ];
-
-  const forecastTrackCoords: [number, number][] = [
-    [18.9997, 72.5502],
-    [18.97, 72.68],
-    [18.94, 72.78],
-    [18.92, 72.85],
-  ];
-
-  const forecastConePolygon: [number, number][] = [
-    [18.9997, 72.5502],
-    [19.08, 72.82],
-    [18.86, 72.88],
+    INCIDENT_CENTER,
   ];
 
   const restrictedZoneCoords: [number, number][] = [
@@ -393,9 +410,9 @@ export const MapPanel: React.FC<MapPanelProps> = ({
                 </div>
                 <div className="space-y-2">
                   {[
-                    { key: "oilSlick", label: "Oil Slick (Current)" },
+                    { key: "oilSlick", label: "Multi-Tier Oil Slick (Core/Sheen)" },
                     { key: "hindcastTrack", label: "Hindcast Track (Past)" },
-                    { key: "forecastTrack", label: "Forecast Track (Future)" },
+                    { key: "forecastTrack", label: "Forecast Track (+48h)" },
                     { key: "probableOrigin", label: "Probable Origin Zone" },
                     { key: "vesselsAis", label: "Vessels (AIS)" },
                     { key: "ports", label: "Major Ports (Harbors)" },
@@ -425,7 +442,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({
             selectedPortName={selectedPort?.name}
           />
 
-          {/* Contextual Back to Incident Button — only appears when navigated away */}
+          {/* Contextual Back to Incident Button */}
           {selectedPort && (
             <button
               type="button"
@@ -491,7 +508,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({
         </div>
       </div>
 
-      {/* Map Body Container with defined explicit height and overflow-hidden for map canvas */}
+      {/* Map Body Container */}
       <div
         className={
           isFullscreen
@@ -502,8 +519,23 @@ export const MapPanel: React.FC<MapPanelProps> = ({
         <MapContainer
           center={INCIDENT_CENTER}
           zoom={DEFAULT_ZOOM}
+          minZoom={4}
+          maxZoom={18}
           zoomControl={false}
           scrollWheelZoom={true}
+          preferCanvas={true}
+          zoomAnimation={true}
+          zoomAnimationThreshold={8}
+          fadeAnimation={true}
+          markerZoomAnimation={true}
+          inertia={true}
+          inertiaDeceleration={3400}
+          inertiaMaxSpeed={1500}
+          wheelDebounceTime={60}
+          wheelPxPerZoomLevel={120}
+          easeLinearity={0.2}
+          zoomSnap={0.5}
+          zoomDelta={0.5}
           style={{
             width: "100%",
             height: isFullscreen ? "100%" : "550px",
@@ -520,7 +552,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({
             }}
           />
 
-          {/* Conditional Tile Layers (Map vs Satellite) */}
+          {/* Conditional Tile Layers (Map vs Satellite) with Buffer */}
           {mapMode === "Map" ? (
             <TileLayer
               key="osm-map-layer"
@@ -528,6 +560,13 @@ export const MapPanel: React.FC<MapPanelProps> = ({
               subdomains={["a", "b", "c"]}
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               maxZoom={19}
+              maxNativeZoom={19}
+              tileSize={256}
+              updateWhenZooming={false}
+              updateWhenIdle={false}
+              updateInterval={100}
+              keepBuffer={12}
+              crossOrigin="anonymous"
             />
           ) : (
             <TileLayer
@@ -536,35 +575,74 @@ export const MapPanel: React.FC<MapPanelProps> = ({
               attribution="Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
               maxNativeZoom={18}
               maxZoom={19}
+              tileSize={256}
+              updateWhenZooming={false}
+              updateWhenIdle={false}
+              updateInterval={100}
+              keepBuffer={12}
+              crossOrigin="anonymous"
             />
           )}
 
-          {/* 1. Oil Slick Polygon Layer */}
+          {/* 1. REALISTIC MULTI-LAYER OIL SLICK (Core, Moderate, Sheen) */}
           {layers.oilSlick && (
-            <Polygon
-              positions={oilSlickPolygon}
-              pathOptions={{
-                color: "#EF4444",
-                fillColor: "#DC2626",
-                fillOpacity: 0.75,
-                weight: 2,
-              }}
-            >
-              <Popup>
-                <div className="text-xs p-1">
-                  <div className="font-bold text-rose-600">Active Hydrocarbon Slick</div>
-                  <div className="text-[11px] text-slate-600">Area: 276.04 km²</div>
-                  <div className="text-[10px] text-slate-500 font-mono">18.9997°N, 72.5502°E</div>
-                </div>
-              </Popup>
-            </Polygon>
+            <>
+              {/* Outer Light Sheen Layer */}
+              <Polygon
+                positions={hydroSim.sheenLayer.coordinates}
+                pathOptions={{
+                  color: hydroSim.sheenLayer.color,
+                  fillColor: hydroSim.sheenLayer.fillColor,
+                  fillOpacity: hydroSim.sheenLayer.fillOpacity,
+                  weight: hydroSim.sheenLayer.weight,
+                }}
+              >
+                <Popup>
+                  <div className="text-xs p-1">
+                    <div className="font-bold text-sky-700">Light Peripheral Sheen (Bonn 1-2)</div>
+                    <div className="text-[11px] text-slate-600">Total Area: {hydroSim.totalAreaKm2} km²</div>
+                    <div className="text-[10px] text-slate-500 font-mono">18.9997°N, 72.5502°E</div>
+                  </div>
+                </Popup>
+              </Polygon>
+
+              {/* Moderate Contamination Layer */}
+              <Polygon
+                positions={hydroSim.moderateLayer.coordinates}
+                pathOptions={{
+                  color: hydroSim.moderateLayer.color,
+                  fillColor: hydroSim.moderateLayer.fillColor,
+                  fillOpacity: hydroSim.moderateLayer.fillOpacity,
+                  weight: hydroSim.moderateLayer.weight,
+                }}
+              />
+
+              {/* Heavy Core Layer */}
+              <Polygon
+                positions={hydroSim.coreLayer.coordinates}
+                pathOptions={{
+                  color: hydroSim.coreLayer.color,
+                  fillColor: hydroSim.coreLayer.fillColor,
+                  fillOpacity: hydroSim.coreLayer.fillOpacity,
+                  weight: hydroSim.coreLayer.weight,
+                }}
+              >
+                <Popup>
+                  <div className="text-xs p-1">
+                    <div className="font-bold text-rose-800">Heavy Viscous Core Emulsion</div>
+                    <div className="text-[11px] text-slate-600">Core Area: {hydroSim.coreLayer.areaKm2} km²</div>
+                    <div className="text-[10px] text-slate-500 font-mono">Thickness: &gt;100 µm</div>
+                  </div>
+                </Popup>
+              </Polygon>
+            </>
           )}
 
           {/* 2. Probable Origin Zone Circle */}
           {layers.probableOrigin && (
             <Circle
               center={probableOriginCenter}
-              radius={7000}
+              radius={hydroSim.originConfidenceRadiusKm * 1000}
               pathOptions={{
                 color: "#F59E0B",
                 fillColor: "#FBBF24",
@@ -576,8 +654,10 @@ export const MapPanel: React.FC<MapPanelProps> = ({
               <Popup>
                 <div className="text-xs p-1">
                   <div className="font-bold text-amber-600">Probable Origin Zone</div>
-                  <div className="text-[10px] text-slate-600">Time Window: T-18 to T-30 h</div>
-                  <div className="text-[10px] text-slate-500 font-mono">18.78°N, 72.51°E</div>
+                  <div className="text-[10px] text-slate-600">Confidence: {hydroSim.originConfidenceScorePct}%</div>
+                  <div className="text-[10px] text-slate-500 font-mono">
+                    {probableOriginCenter[0].toFixed(4)}°N, {probableOriginCenter[1].toFixed(4)}°E
+                  </div>
                 </div>
               </Popup>
             </Circle>
@@ -599,7 +679,7 @@ export const MapPanel: React.FC<MapPanelProps> = ({
           {layers.forecastTrack && (
             <>
               <Polyline
-                positions={forecastTrackCoords}
+                positions={hydroSim.forecastLineCoords}
                 pathOptions={{
                   color: "#38BDF8",
                   weight: 3,
@@ -607,12 +687,12 @@ export const MapPanel: React.FC<MapPanelProps> = ({
                 }}
               />
               <Polygon
-                positions={forecastConePolygon}
+                positions={hydroSim.probabilityEnvelope}
                 pathOptions={{
-                  color: "#F59E0B",
-                  fillColor: "#EF4444",
-                  fillOpacity: 0.3,
-                  weight: 1,
+                  color: "#6366F1",
+                  fillColor: "#818CF8",
+                  fillOpacity: 0.18,
+                  weight: 1.2,
                   dashArray: "2 2",
                 }}
               />
@@ -890,34 +970,35 @@ export const MapPanel: React.FC<MapPanelProps> = ({
         </div>
 
         {/* Tactical Legend (Bottom-Right Overlay) */}
-        <div className="absolute bottom-3 right-3 bg-[#0B1D35]/90 backdrop-blur-md border border-slate-700 rounded-2xl p-2.5 shadow-xl text-[9px] text-slate-200 z-[1000] max-w-[200px]">
-          <div className="font-bold text-white mb-1 border-b border-slate-700/60 pb-0.5">
-            Tactical Legend
+        <div className="absolute bottom-3 right-3 bg-[#0B1D35]/95 backdrop-blur-md border border-slate-700 rounded-2xl p-2.5 shadow-xl text-[9px] text-slate-200 z-[1000] max-w-[210px]">
+          <div className="font-bold text-white mb-1 border-b border-slate-700/60 pb-0.5 flex items-center justify-between">
+            <span>Tactical Legend</span>
+            <span className="text-[8.5px] text-sky-400 font-mono">Bonn Scale</span>
           </div>
-          <div className="grid grid-cols-1 gap-1 font-medium">
+          <div className="grid grid-cols-1 gap-1 font-medium text-[8.5px]">
             <div className="flex items-center gap-1.5">
-              <div className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
-              <span>Oil Slick (Current)</span>
+              <div className="w-2.5 h-2.5 rounded bg-[#1C0D02] border border-amber-900 shrink-0" />
+              <span>Heavy Core (&gt;100 µm • Bonn 5)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="w-3 border-b-2 border-dashed border-amber-400 shrink-0" />
-              <span>Hindcast Track (Past)</span>
+              <div className="w-2.5 h-2.5 rounded bg-[#B45309] border border-amber-600 shrink-0" />
+              <span>Moderate (5–50 µm • Bonn 3–4)</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-2.5 h-2.5 rounded bg-[#0284C7] border border-sky-400 shrink-0" />
+              <span>Light Sheen (&lt;1 µm • Bonn 1–2)</span>
+            </div>
+            <div className="flex items-center gap-1.5 pt-0.5 border-t border-slate-700/50">
+              <div className="w-2.5 h-2.5 rounded border border-dashed border-amber-400 shrink-0" />
+              <span>Probable Origin (T-18h)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="w-3 border-b-2 border-dashed border-sky-400 shrink-0" />
-              <span>Forecast Track (Future)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2.5 h-2.5 rounded border border-dashed border-amber-400 shrink-0" />
-              <span>Probable Origin Zone</span>
+              <span>Forecast Corridor (+48h)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="w-2.5 h-2.5 rotate-45 bg-emerald-500 shrink-0" />
-              <span>Vessels (AIS)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2.5 h-2.5 rounded-full bg-sky-500 border border-white shrink-0" />
-              <span>Indian Major Ports</span>
+              <span>AIS Vessel Telemetry</span>
             </div>
           </div>
         </div>
