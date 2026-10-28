@@ -34,6 +34,7 @@ import {
   Info,
 } from "lucide-react";
 import { INCIDENT_DATA } from "../data/incidentData";
+import { generateForensicHourlySnapshotPdf } from "../services/forensicSnapshotPdfGenerator";
 
 export type ForensicZoomTab = "zones" | "evolution" | "dna" | "all";
 
@@ -52,6 +53,28 @@ export const ForensicZoomModal: React.FC<ForensicZoomModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<ForensicZoomTab>(initialTab);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isExportingSnapshot, setIsExportingSnapshot] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
+
+  const handleExportSnapshotPdf = async () => {
+    try {
+      setIsExportingSnapshot(true);
+      await generateForensicHourlySnapshotPdf({
+        incidentCode: INCIDENT_DATA.id,
+        incidentName: INCIDENT_DATA.name,
+        frames: INCIDENT_DATA.timelineFrames,
+      });
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 3500);
+    } catch (err) {
+      console.error("Failed to generate forensic snapshot PDF:", err);
+      if (onExportReport) {
+        onExportReport();
+      }
+    } finally {
+      setIsExportingSnapshot(false);
+    }
+  };
 
   // Synchronize when initialTab changes
   useEffect(() => {
@@ -204,15 +227,30 @@ export const ForensicZoomModal: React.FC<ForensicZoomModalProps> = ({
 
           {/* Window Actions */}
           <div className="flex items-center gap-2">
-            {onExportReport && (
-              <button
-                onClick={onExportReport}
-                className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-xs font-semibold transition-all cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Export Snapshot PDF</span>
-              </button>
-            )}
+            <button
+              onClick={handleExportSnapshotPdf}
+              disabled={isExportingSnapshot}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 hover:from-slate-800 hover:to-slate-700 text-slate-100 border border-emerald-500/40 hover:border-emerald-400 text-xs font-semibold transition-all shadow-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              title="Download Snapshot PDF containing visual map snapshots of each section of hours of the oil spill"
+            >
+              {isExportingSnapshot ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-emerald-300">Generating Snapshots...</span>
+                </>
+              ) : exportSuccess ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-300 font-bold">PDF Downloaded!</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">Export Snapshot PDF</span>
+                  <span className="sm:hidden">PDF</span>
+                </>
+              )}
+            </button>
 
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
